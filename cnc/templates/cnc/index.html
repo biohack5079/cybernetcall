@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CyberNetCall</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrious/4.0.2/qrious.min.js"></script>
+    <script src="https://unpkg.com/idb@7/build/umd.js"></script>
+    <script src="https://unpkg.com/html5-qrcode"></script> <!-- QRコードスキャナーライブラリ -->
+    <link rel="manifest" href="manifest.json">
+    <style>
+        body {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            font-family: Arial, sans-serif;
+            min-height: 100vh;
+        }
+        /* ... (Existing CSS) ... */
+        .call-controls {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+        }
+        #qr-reader {
+            width: 300px;
+            margin: 20px auto;
+        }
+        #qr-reader__dashboard_section_csr {
+            display: none;
+        }
+    </style>
+    <script>
+        window.ngrokUrl = "https://.ngrok-free.app"; // Replace with your ngrok URL
+    </script>
+    <script defer src="app.js"></script>
+</head>
+<body>
+    <h1>CyberNetCall</h1>
+    <p>Scan the QR code and add it to your home screen.</p>
+    <canvas id="qrcode"></canvas>
+    <div id="myQrCode"></div>
+
+    <div id="friendList"></div>
+
+    <h2>Direct Message</h2>
+    <input type="text" id="messageInput" placeholder="Enter your message">
+    <button id="sendMessage">Send</button>
+    <div id="messageArea"></div>
+
+    <h2>Post Friends</h2>
+    <input type="text" id="postInput" placeholder="Enter your post">
+    <button id="sendPost">Post</button>
+    <div id="postArea"></div>
+
+    <h2>Call Friend</h2>
+    <div id="videoArea">
+        <video id="localVideo" autoplay muted></video>
+        <video id="remoteVideo" autoplay></video>
+    </div>
+    <!-- Call button and video on button with emoji -->
+    <div class="call-controls">
+        <button id="callButton">📞</button>
+        <button id="videoButton">🎥</button>
+    </div>
+    <input type="file" id="fileInput">
+    <button id="sendFile">Send File</button>
+    <div id="qr-reader"></div>
+    <div id="qr-reader-results"></div>
+
+<script>
+    // Service Worker の登録 (http または https の場合のみ)
+    if (window.location.protocol === 'http:' || window.location.protocol === 'https:') {
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('service-worker.js')
+                .then(reg => console.log("Service Worker registered!", reg))
+                .catch(err => console.log("Service Worker registration failed!", err));
+        }
+    }
+
+    // QR Code Generation
+    let qr; // QRious object
+
+    // Calculate QR Code Size
+    function calculateQrCodeSize() {
+        const screenWidth = window.innerWidth;
+        // 80% of the screen width (adjustable)
+        const qrCodeSize = Math.min(screenWidth * 0.8, 500); // Max size 500px
+        return qrCodeSize;
+    }
+
+    // Generate or Update QR Code
+    function updateQrCode() {
+        const qrCodeSize = calculateQrCodeSize();
+
+        if (qr) {
+            // If QR code already exists, update the size
+            qr.set({ size: qrCodeSize });
+        } else {
+            // If QR code does not exist, generate a new one
+            qr = new QRious({
+                element: document.getElementById('qrcode'),
+                value: window.ngrokUrl,
+                size: qrCodeSize
+            });
+        }
+    }
+
+    // ngrokUrlChanged Event Listener
+    window.addEventListener('ngrokUrlChanged', () => {
+        updateQrCode();
+    });
+    // Initialize QR Code
+    window.dispatchEvent(new Event('ngrokUrlChanged'));
+
+    // Resize Event Listener
+    window.addEventListener('resize', () => {
+        updateQrCode();
+    });
+
+    // Video On/Off State
+    let isVideoOn = false;
+
+    // Video On/Off Button Click Event
+    const videoButton = document.getElementById('videoButton');
+    videoButton.addEventListener('click', () => {
+        isVideoOn = !isVideoOn;
+        // Call toggleVideo in app.js
+        if (window.toggleVideo) {
+            window.toggleVideo(isVideoOn);
+        }
+    });
+    // Call Button Click Event
+    const callButton = document.getElementById('callButton');
+    callButton.addEventListener('click', () => {
+        // Call startCall in app.js
+        if (window.startCall) {
+            window.startCall();
+        }
+    });
+
+    // QR Code Scanner
+    const qrReader = document.getElementById('qr-reader');
+    const qrReaderResults = document.getElementById('qr-reader-results');
+    let html5QrCode;
+    function startQrCodeScanner() {
+        if (qrReader) {
+            if (!html5QrCode) {
+                html5QrCode = new Html5Qrcode(qrReader);
+            }
+            html5QrCode.start(
+                { facingMode: "environment" },
+                {
+                    fps: 10,
+                    qrbox: { width: 250, height: 250 }
+                },
+                (decodedText, decodedResult) => {
+                    console.log(`Code matched = ${decodedText}`, decodedResult);
+                    qrReaderResults.innerHTML = `<div>${decodedText}</div>`;
+                    if (window.connectToFriend) {
+                        window.connectToFriend(decodedText);
+                    }
+                    html5QrCode.stop();
+                },
+                (errorMessage) => {
+                    console.log(errorMessage);
+                })
+                .catch((err) => {
+                    console.log(`Unable to start scanning, error: ${err}`);
+                });
+        } else {
+            console.error("qr-reader element not found");
+        }
+    }
+    // QRコードスキャナーの開始
+    startQrCodeScanner();
+</script>
+
+</body>
+</html>
