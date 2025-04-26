@@ -3,9 +3,10 @@
 const CACHE_NAME = 'cybernetcall-cache-v2'; // ★バージョンを1つ上げた
 const urlsToCache = [
   './', // ルートURL
-  './app.js',
-  './manifest.json',
-  './icon.png'
+  '/static/cnc/manifest.json',
+  '/static/cnc/icon.png',
+  '/static/cnc/app.js',
+  '/static/cnc/style.css'
 ];
 
 // インストール時に即スキップしてすぐ新しいSW有効化

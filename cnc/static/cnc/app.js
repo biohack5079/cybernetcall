@@ -1,10 +1,7 @@
-// app.js
-
 let myDeviceId;
 let selectedFriendId;
 let peerConnection;
 let dataChannel;
-let socket;
 let localStream;
 let remoteStream;
 
@@ -61,39 +58,24 @@ function handleDataChannelMessage(event) {
   displayPost(post);
 }
 
-// WebSocketサーバーと接続
-async function connectSignalingServer() {
-  socket = new WebSocket('wss://your-signaling-server.com:8765'); // ← 本番は正しく設定
-  socket.onopen = () => {
-    console.log('Connected to signaling server');
-    socket.send(JSON.stringify({ type: 'register', deviceId: myDeviceId }));
-  };
-  socket.onmessage = async (event) => {
-    const data = JSON.parse(event.data);
-    if (data.type === 'offer') {
-      await handleOffer(data.offer);
-    } else if (data.type === 'answer') {
-      await handleAnswer(data.answer);
-    } else if (data.type === 'candidate') {
-      await peerConnection.addIceCandidate(data.candidate);
-    }
-  };
-}
-
 // PeerConnection生成
 async function createPeerConnection() {
   peerConnection = new RTCPeerConnection({
     iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
   });
+
   peerConnection.onicecandidate = event => {
     if (event.candidate) {
-      socket.send(JSON.stringify({ type: 'candidate', candidate: event.candidate }));
+      console.log('ICE Candidate:', event.candidate);
+      // DHTを介してICE Candidateを共有
     }
   };
+
   peerConnection.ondatachannel = event => {
     dataChannel = event.channel;
     dataChannel.onmessage = handleDataChannelMessage;
   };
+
   peerConnection.ontrack = (event) => {
     event.streams[0].getTracks().forEach((track) => {
       remoteStream.addTrack(track);
@@ -107,7 +89,8 @@ async function createOffer() {
   dataChannel.onmessage = handleDataChannelMessage;
   const offer = await peerConnection.createOffer();
   await peerConnection.setLocalDescription(offer);
-  socket.send(JSON.stringify({ type: 'offer', offer: offer }));
+  console.log('Created WebRTC offer:', offer);
+  // DHTを介してOfferを共有
 }
 
 // Offer受信
@@ -115,7 +98,8 @@ async function handleOffer(offer) {
   await peerConnection.setRemoteDescription(offer);
   const answer = await peerConnection.createAnswer();
   await peerConnection.setLocalDescription(answer);
-  socket.send(JSON.stringify({ type: 'answer', answer: answer }));
+  console.log('Created WebRTC answer:', answer);
+  // DHTを介してAnswerを共有
 }
 
 // Answer受信
@@ -146,7 +130,6 @@ document.getElementById('sendPost').addEventListener('click', async () => {
 window.connectToFriend = async function(decodedText) {
   console.log("Connecting to friend...");
   myDeviceId = generateUUID();
-  await connectSignalingServer();
   await createPeerConnection();
   await createOffer();
 };
@@ -164,7 +147,6 @@ async function initializeVideoCall() {
   localStream.getTracks().forEach((track) => {
     peerConnection.addTrack(track, localStream);
   });
-
 }
 
 // 通話開始
