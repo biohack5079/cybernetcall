@@ -2,8 +2,7 @@
 
 const CACHE_NAME = 'cybernetcall-cache-v2'; // ★バージョンを1つ上げた
 const urlsToCache = [
-  './',
-  './index.html',
+  './', // ルートURL
   './app.js',
   './manifest.json',
   './icon.png'
