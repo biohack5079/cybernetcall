@@ -165,8 +165,6 @@ async function initializeVideoCall() {
     peerConnection.addTrack(track, localStream);
   });
 
-  document.getElementById('callButton').disabled = false;
-  document.getElementById('videoButton').disabled = false;
 }
 
 // 通話開始
