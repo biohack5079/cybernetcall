@@ -34,7 +34,7 @@ SECRET_KEY = 'django-insecure-vaj*zpu!9^3=8%=_n(*9z39dq29l!mbf49rz(jr62k744wvl7j
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ['cybernetcall.onrender.com']
+ALLOWED_HOSTS = ['cybernetcall.onrender.com', '127.0.0.1', 'localhost']
 
 
 # Application definition
@@ -129,7 +129,9 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/5.0/howto/static-files/
 
-STATIC_URL = 'static/'
+STATIC_URL = '/static/'
+STATICFILES_DIRS = [os.path.join(BASE_DIR, 'static')]
+
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.0/ref/settings/#default-auto-field

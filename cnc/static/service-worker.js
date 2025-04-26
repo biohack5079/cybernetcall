@@ -1,46 +1,51 @@
-const CACHE_NAME = 'cybernetcall-cache-v1'; // キャッシュ名にバージョンを含める
-const URLS_TO_CACHE = [
-    '/',
-    '/static/app.js',
-    '/static/manifest.json',
-    '/static/sw.js',
-    '/static/css/styles.css',
-    'https://cdnjs.cloudflare.com/ajax/libs/qrious/4.0.2/qrious.min.js',
-    'https://unpkg.com/idb@7/build/umd.js',
-    'https://unpkg.com/html5-qrcode'
+// service-worker.js
+
+const CACHE_NAME = 'cybernetcall-cache-v2'; // ★バージョンを1つ上げた
+const urlsToCache = [
+  './',
+  './index.html',
+  './app.js',
+  './manifest.json',
+  './icon.png'
 ];
 
-// インストールイベント: キャッシュを作成
-self.addEventListener('install', event => {
-    event.waitUntil(
-        caches.open(CACHE_NAME).then(cache => {
-            console.log('Opened cache');
-            return cache.addAll(URLS_TO_CACHE);
-        })
-    );
+// インストール時に即スキップしてすぐ新しいSW有効化
+self.addEventListener('install', (event) => {
+  console.log('[Service Worker] Installing new service worker...');
+  self.skipWaiting(); // ★ここが大事
+  event.waitUntil(
+    caches.open(CACHE_NAME).then((cache) => {
+      console.log('[Service Worker] Caching app shell');
+      return cache.addAll(urlsToCache);
+    })
+  );
 });
 
-// アクティベートイベント: 古いキャッシュを削除
-self.addEventListener('activate', event => {
-    event.waitUntil(
-        caches.keys().then(cacheNames => {
-            return Promise.all(
-                cacheNames.map(cacheName => {
-                    if (cacheName !== CACHE_NAME) {
-                        console.log('Deleting old cache:', cacheName);
-                        return caches.delete(cacheName);
-                    }
-                })
-            );
+// アクティベート時に古いキャッシュを一掃
+self.addEventListener('activate', (event) => {
+  console.log('[Service Worker] Activating and cleaning old caches...');
+  event.waitUntil(
+    caches.keys().then((cacheNames) => {
+      return Promise.all(
+        cacheNames.map((cacheName) => {
+          if (cacheName !== CACHE_NAME) {
+            console.log('[Service Worker] Deleting old cache:', cacheName);
+            return caches.delete(cacheName);
+          }
         })
-    );
+      );
+    }).then(() => {
+      console.log('[Service Worker] Now ready to handle fetches!');
+      return self.clients.claim(); // ★ここも大事
+    })
+  );
 });
 
-// フェッチイベント: キャッシュからリソースを提供
-self.addEventListener('fetch', event => {
-    event.respondWith(
-        caches.match(event.request).then(response => {
-            return response || fetch(event.request);
-        })
-    );
+// ネット接続優先、なければキャッシュ
+self.addEventListener('fetch', (event) => {
+  event.respondWith(
+    fetch(event.request)
+      .catch(() => caches.match(event.request))
+  );
 });
+
