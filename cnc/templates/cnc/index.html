@@ -10,7 +10,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrious/4.0.2/qrious.min.js" defer></script>
   <script src="https://unpkg.com/idb@7/build/umd.js" defer></script>
   <script src="https://unpkg.com/html5-qrcode" defer></script>
-  <script src="{% static 'app.js' %}" defer></script>
+  <script src="{% static 'cnc/app.js' %}" defer></script>
   <style>
     body {
       display: flex;
@@ -52,7 +52,7 @@
   </style>
 </head>
 <body>
-  <h1>CybernetCall</h1>
+  <h1>CyberNetCall</h1>
   <p>Scan the QR code and add it to your home screen.</p>
 
   <canvas id="qrcode"></canvas>
@@ -120,7 +120,7 @@
     };
 
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('{% static 'service-worker.js' %}')
+      navigator.serviceWorker.register('{% static 'cnc/service-worker.js' %}')
         .then(reg => console.log("Service Worker registered", reg))
         .catch(err => console.error("Service Worker failed", err));
     }
