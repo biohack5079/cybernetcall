@@ -92,7 +92,7 @@
       const size = Math.min(window.innerWidth * 0.8, 500);
       const qr = new QRious({
         element: document.getElementById('qrcode'),
-        value: window.ngrokUrl || location.href,
+        value: location.href,
         size
       });
     };

@@ -5,6 +5,8 @@ let selectedFriendId;
 let peerConnection;
 let dataChannel;
 let socket;
+let localStream;
+let remoteStream;
 
 let dbPromise = idb.openDB('cybernetcall-db', 1, {
   upgrade(db) {
@@ -92,6 +94,11 @@ async function createPeerConnection() {
     dataChannel = event.channel;
     dataChannel.onmessage = handleDataChannelMessage;
   };
+  peerConnection.ontrack = (event) => {
+    event.streams[0].getTracks().forEach((track) => {
+      remoteStream.addTrack(track);
+    });
+  };
 }
 
 // Offer作成
@@ -144,6 +151,36 @@ window.connectToFriend = async function(decodedText) {
   await createOffer();
 };
 
+// ビデオ通話の初期化
+async function initializeVideoCall() {
+  localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+  const localVideo = document.getElementById('localVideo');
+  localVideo.srcObject = localStream;
+
+  remoteStream = new MediaStream();
+  const remoteVideo = document.getElementById('remoteVideo');
+  remoteVideo.srcObject = remoteStream;
+
+  localStream.getTracks().forEach((track) => {
+    peerConnection.addTrack(track, localStream);
+  });
+
+  document.getElementById('callButton').disabled = false;
+  document.getElementById('videoButton').disabled = false;
+}
+
+// 通話開始
+document.getElementById('callButton').addEventListener('click', async () => {
+  const offer = await peerConnection.createOffer();
+  await peerConnection.setLocalDescription(offer);
+  console.log('Offer created:', offer);
+  // Offerを相手に送信する処理を追加
+});
+
+// ビデオのオン/オフ
+document.getElementById('videoButton').addEventListener('click', () => {
+  localStream.getVideoTracks()[0].enabled = !localStream.getVideoTracks()[0].enabled;
+});
+
 // 初期ロード時、ローカルの投稿を表示
 displayPosts();
-
