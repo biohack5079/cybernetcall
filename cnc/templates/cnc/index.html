@@ -5,49 +5,70 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>CyberNetCall</title>
-  <link rel="stylesheet" href="{% static 'cnc/style.css' %}">
   <link rel="manifest" href="{% static 'cnc/manifest.json' %}">
-  <link rel="icon" href="{% static 'cnc/icon.png' %}">
+  <!-- アイコンパスを修正 (manifest.json に合わせる) -->
+  <link rel="icon" href="{% static 'cnc/icons/icon-192x192.png' %}">
+  <!-- CSSファイルを読み込む -->
+  <link rel="stylesheet" href="{% static 'cnc/style.css' %}">
+  <!-- 外部ライブラリ (deferで非同期読み込み) -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrious/4.0.2/qrious.min.js" defer></script>
   <script src="https://unpkg.com/idb@7/build/umd.js" defer></script>
   <script src="https://unpkg.com/html5-qrcode" defer></script>
+  <!-- アプリケーション本体のJavaScript -->
   <script src="{% static 'cnc/app.js' %}" defer></script>
 </head>
 <body>
   <h1>CyberNetCall</h1>
-  <p>Scan the QR code and add it to your home screen.</p>
+  <!-- 接続状態表示用 -->
+  <div id="connectionStatus" style="display: none; font-weight: bold; margin-bottom: 1rem;"></div>
+  <p>Scan the QR code or let your friend scan yours to connect.</p>
 
+  <!-- QRコード表示用 -->
   <canvas id="qrcode"></canvas>
-  <div id="friendList"></div>
-  
+
+  <!-- QRコードリーダー用 -->
+  <div id="qr-reader" style="width: 300px; margin: 20px auto;"></div>
+  <div id="qr-reader-results" style="margin-top: 10px; font-style: italic;"></div>
+
+  <!-- Direct Mail セクション -->
   <section class="section">
     <h2>Direct Mail</h2>
-    <input type="text" id="messageInput" placeholder="Type a message...">
+    <label for="messageInput" class="visually-hidden">Direct Message</label>
+    <input type="text" id="messageInput" placeholder="Type a message..." aria-label="Direct Message">
     <button id="sendMessage">Send</button>
-    <div id="messageArea"></div>
+    <div id="messageArea" class="message-area"></div>
   </section>
-  
+
+  <!-- Post Friends セクション -->
   <section class="section">
     <h2>Post Friends</h2>
-    <input type="text" id="postInput" placeholder="Write your post...">
+    <label for="postInput" class="visually-hidden">Post Content</label>
+    <input type="text" id="postInput" placeholder="Write your post..." aria-label="Post Content">
     <button id="sendPost">Post</button>
-    <div id="postArea"></div>
+    <div id="postArea" class="post-area"></div>
   </section>
 
-<section class="section">
-    <h2>Group Meeting</h2>
-    <video id="localVideo" autoplay muted playsinline></video>
-    <video id="remoteVideo" autoplay playsinline></video>
-    <div class="call-controls">
-      <button id="callButton">📞</button>
-      <button id="videoButton">🎥</button>
+  <!-- Group Meeting セクション (1対1ビデオ通話) -->
+  <section class="section">
+    <h2>Meeting</h2>
+    <div class="video-container">
+      <video id="localVideo" autoplay muted playsinline></video>
+      <video id="remoteVideo" autoplay playsinline></video>
     </div>
-    <input type="file" id="fileInput">
-    <button id="sendFile">Send File</button>
+    <div class="call-controls">
+      <button id="callButton" aria-label="Start/End Call">📞</button>
+      <button id="videoButton" aria-label="Toggle Video" style="display: none;">🎥</button>
+    </div>
+    <!-- ファイル送信機能 (スタブ) -->
+    <div style="margin-top: 1rem;">
+        <label for="fileInput">Share File:</label>
+        <input type="file" id="fileInput">
+        <button id="sendFile">Send File</button>
+    </div>
   </section>
 
-  <div id="qr-reader"></div>
-  <div id="qr-reader-results"></div>
+  <!-- friendList は現在未使用のためコメントアウトまたは削除 -->
+  <!-- <div id="friendList"></div> -->
+
 </body>
 </html>
-
