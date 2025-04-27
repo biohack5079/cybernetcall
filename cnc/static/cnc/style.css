@@ -1,0 +1,38 @@
+
+body {
+display: flex;
+flex-direction: column;
+align-items: center;
+justify-content: center;
+text-align: center;
+font-family: Arial, sans-serif;
+min-height: 100vh;
+margin: 0;
+padding: 1rem;
+}
+.section {
+max-width: 400px;
+width: 100%;
+margin: 1rem auto;
+border: 1px solid #ccc;
+padding: 1rem;
+border-radius: 8px;
+}
+.call-controls {
+display: flex;
+gap: 10px;
+margin-top: 10px;
+justify-content: center;
+}
+#qr-reader {
+width: 300px;
+margin: 20px auto;
+}
+#qr-reader__dashboard_section_csr {
+display: none;
+}
+video {
+width: 100%;
+max-width: 300px;
+margin: 10px 0;
+}

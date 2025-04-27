@@ -164,3 +164,45 @@ document.getElementById('videoButton').addEventListener('click', () => {
 
 // 初期ロード時、ローカルの投稿を表示
 displayPosts();
+
+
+const updateQrCode = () => {
+  const size = Math.min(window.innerWidth * 0.8, 500);
+  const qr = new QRious({
+    element: document.getElementById('qrcode'),
+    value: location.href,
+    size
+  });
+};
+
+const setupEvents = () => {
+  window.addEventListener('resize', updateQrCode);
+};
+
+const startQrScanner = () => {
+  const reader = document.getElementById('qr-reader');
+  const results = document.getElementById('qr-reader-results');
+  if (reader) {
+    const qrScanner = new Html5Qrcode(reader);
+    qrScanner.start(
+      { facingMode: "environment" },
+      { fps: 10, qrbox: { width: 250, height: 250 } },
+      (decodedText) => {
+        results.innerHTML = `<div>${decodedText}</div>`;
+        window.connectToFriend?.(decodedText);
+        qrScanner.stop();
+      },
+      (error) => console.warn(error)
+    ).catch(err => console.error("QR scanner error:", err));
+  }
+};
+
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('{% static 'cnc/service-worker.js' %}')
+    .then(reg => console.log("Service Worker registered", reg))
+    .catch(err => console.error("Service Worker failed", err));
+}
+
+updateQrCode();
+setupEvents();
+startQrScanner();

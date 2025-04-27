@@ -5,51 +5,13 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>CyberNetCall</title>
+  <link rel="stylesheet" href="{% static 'cnc/style.css' %}">
   <link rel="manifest" href="{% static 'cnc/manifest.json' %}">
   <link rel="icon" href="{% static 'cnc/icon.png' %}">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrious/4.0.2/qrious.min.js" defer></script>
   <script src="https://unpkg.com/idb@7/build/umd.js" defer></script>
   <script src="https://unpkg.com/html5-qrcode" defer></script>
   <script src="{% static 'cnc/app.js' %}" defer></script>
-  <style>
-    body {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      text-align: center;
-      font-family: Arial, sans-serif;
-      min-height: 100vh;
-      margin: 0;
-      padding: 1rem;
-    }
-    .section {
-      max-width: 400px;
-      width: 100%;
-      margin: 1rem auto;
-      border: 1px solid #ccc;
-      padding: 1rem;
-      border-radius: 8px;
-    }
-    .call-controls {
-      display: flex;
-      gap: 10px;
-      margin-top: 10px;
-      justify-content: center;
-    }
-    #qr-reader {
-      width: 300px;
-      margin: 20px auto;
-    }
-    #qr-reader__dashboard_section_csr {
-      display: none;
-    }
-    video {
-      width: 100%;
-      max-width: 300px;
-      margin: 10px 0;
-    }
-  </style>
 </head>
 <body>
   <h1>CyberNetCall</h1>
@@ -86,49 +48,6 @@
 
   <div id="qr-reader"></div>
   <div id="qr-reader-results"></div>
-
-  <script>
-    const updateQrCode = () => {
-      const size = Math.min(window.innerWidth * 0.8, 500);
-      const qr = new QRious({
-        element: document.getElementById('qrcode'),
-        value: location.href,
-        size
-      });
-    };
-
-    const setupEvents = () => {
-      window.addEventListener('resize', updateQrCode);
-    };
-
-    const startQrScanner = () => {
-      const reader = document.getElementById('qr-reader');
-      const results = document.getElementById('qr-reader-results');
-      if (reader) {
-        const qrScanner = new Html5Qrcode(reader);
-        qrScanner.start(
-          { facingMode: "environment" },
-          { fps: 10, qrbox: { width: 250, height: 250 } },
-          (decodedText) => {
-            results.innerHTML = `<div>${decodedText}</div>`;
-            window.connectToFriend?.(decodedText);
-            qrScanner.stop();
-          },
-          (error) => console.warn(error)
-        ).catch(err => console.error("QR scanner error:", err));
-      }
-    };
-
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('{% static 'cnc/service-worker.js' %}')
-        .then(reg => console.log("Service Worker registered", reg))
-        .catch(err => console.error("Service Worker failed", err));
-    }
-
-    updateQrCode();
-    setupEvents();
-    startQrScanner();
-  </script>
 </body>
 </html>
 
