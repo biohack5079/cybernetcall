@@ -6,69 +6,92 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>CyberNetCall</title>
   <link rel="manifest" href="{% static 'cnc/manifest.json' %}">
-  <!-- アイコンパスを修正 (manifest.json に合わせる) -->
-  <link rel="icon" href="{% static 'cnc/icons/icon-192x192.png' %}">
-  <!-- CSSファイルを読み込む -->
+  <!-- Standard favicon -->
+  <link rel="icon" href="{% static 'cnc/icons/favicon.ico' %}" sizes="any">
+  <!-- Apple Touch Icon (for iOS home screen) -->
+  <link rel="apple-touch-icon" href="{% static 'cnc/icons/apple-touch-icon.png' %}">
+  <!-- CSS -->
   <link rel="stylesheet" href="{% static 'cnc/style.css' %}">
-  <!-- 外部ライブラリ (deferで非同期読み込み) -->
+  <!-- External Libraries (defer loading) -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrious/4.0.2/qrious.min.js" defer></script>
   <script src="https://unpkg.com/idb@7/build/umd.js" defer></script>
   <script src="https://unpkg.com/html5-qrcode" defer></script>
-  <!-- アプリケーション本体のJavaScript -->
+  <!-- Application Script -->
   <script src="{% static 'cnc/app.js' %}" defer></script>
 </head>
 <body>
-  <h1>CyberNetCall</h1>
-  <!-- 接続状態表示用 -->
-  <div id="connectionStatus" style="display: none; font-weight: bold; margin-bottom: 1rem;"></div>
-  <p>Scan the QR code or let your friend scan yours to connect.</p>
+  <!-- Main application container for layout -->
+  <div class="app-container">
 
-  <!-- QRコード表示用 -->
-  <canvas id="qrcode"></canvas>
+    <!-- Header Area -->
+    <header class="app-header">
+      <h1>CyberNetCall</h1>
+      <div id="connectionStatus" class="connection-status"></div>
+    </header>
 
-  <!-- QRコードリーダー用 -->
-  <div id="qr-reader" style="width: 300px; margin: 20px auto;"></div>
-  <div id="qr-reader-results" style="margin-top: 10px; font-style: italic;"></div>
+    <!-- Main Content Area (Video + Controls) -->
+    <main class="main-content">
+      <!-- Video Meeting Section -->
+      <section class="section video-meeting-section">
+        <h2>Video Meeting</h2>
+        <div class="video-container">
+          <div class="video-wrapper">
+             <video id="remoteVideo" autoplay playsinline></video>
+             <span class="video-label">Remote</span>
+          </div>
+          <div class="video-wrapper local-video-wrapper">
+             <video id="localVideo" autoplay muted playsinline></video>
+             <span class="video-label">Local</span>
+          </div>
+        </div>
+        <div class="call-controls">
+          <button id="callButton" aria-label="Start/End Call">📞 Call</button>
+          <button id="videoButton" aria-label="Toggle Video" style="display: none;">🎥 Video On</button>
+          <!-- File sending UI (basic) -->
+          <div class="file-share">
+              <label for="fileInput" class="visually-hidden">Share File</label>
+              <input type="file" id="fileInput" aria-label="Select file to send">
+              <button id="sendFile">Send File</button>
+          </div>
+        </div>
+      </section>
 
-  <!-- Direct Mail セクション -->
-  <section class="section">
-    <h2>Direct Mail</h2>
-    <label for="messageInput" class="visually-hidden">Direct Message</label>
-    <input type="text" id="messageInput" placeholder="Type a message..." aria-label="Direct Message">
-    <button id="sendMessage">Send</button>
-    <div id="messageArea" class="message-area"></div>
-  </section>
+      <!-- Connection Setup Area (QR Code / Scanner) -->
+      <section id="connection-setup" class="section connection-setup-section">
+         <h2>Connection Setup</h2>
+         <p>Scan the QR code or let your peer scan yours.</p>
+         <canvas id="qrcode"></canvas>
+         <div id="qr-reader"></div>
+         <div id="qr-reader-results"></div>
+      </section>
+    </main>
 
-  <!-- Post Friends セクション -->
-  <section class="section">
-    <h2>Group Chat</h2>
-    <label for="postInput" class="visually-hidden">Post Friends</label>
-    <input type="text" id="postInput" placeholder="Write your post..." aria-label="Post Content">
-    <button id="sendPost">Post</button>
-    <div id="postArea" class="post-area"></div>
-  </section>
+    <!-- Sidebar/Aside Area (Chat + Posts) -->
+    <aside class="sidebar">
+      <!-- Direct Mail Section -->
+      <section class="section chat-section">
+        <h2>Direct Mail</h2>
+        <div id="messageArea" class="message-area"></div>
+        <div class="input-area">
+          <label for="messageInput" class="visually-hidden">Direct Message</label>
+          <input type="text" id="messageInput" placeholder="Type a message..." aria-label="Direct Message">
+          <button id="sendMessage">Send</button>
+        </div>
+      </section>
 
-  <!-- Group Meeting セクション (1対1ビデオ通話) -->
-  <section class="section">
-    <h2>Video Meeting</h2>
-    <div class="video-container">
-      <video id="localVideo" autoplay muted playsinline></video>
-      <video id="remoteVideo" autoplay playsinline></video>
-    </div>
-    <div class="call-controls">
-      <button id="callButton" aria-label="Start/End Call">📞</button>
-      <button id="videoButton" aria-label="Toggle Video" style="display: none;">🎥</button>
-    </div>
-    <!-- ファイル送信機能 (スタブ) -->
-    <div style="margin-top: 1rem;">
-        <label for="fileInput">Share File:</label>
-        <input type="file" id="fileInput">
-        <button id="sendFile">Send File</button>
-    </div>
-  </section>
+      <!-- Group Chat Section -->
+      <section class="section post-section">
+        <h2>Group Chat</h2>
+         <div id="postArea" class="post-area"></div>
+        <div class="input-area">
+          <label for="postInput" class="visually-hidden">Post Content</label>
+          <input type="text" id="postInput" placeholder="Write your post..." aria-label="Post Content">
+          <button id="sendPost">Post</button>
+        </div>
+      </section>
+    </aside>
 
-  <!-- friendList は現在未使用のためコメントアウトまたは削除 -->
-  <!-- <div id="friendList"></div> -->
+  </div> <!-- End of app-container -->
 
 </body>
 </html>

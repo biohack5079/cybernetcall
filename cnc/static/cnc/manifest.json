@@ -4,9 +4,9 @@
   "description": "Peer-to-peer communication app using WebRTC.",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#ffffff",
-  "theme_color": "#007bff",
-  "orientation": "portrait-primary",
+  "background_color": "#f4f7fc", /* Light background */
+  "theme_color": "#0056b3", /* Darker blue */
+  "orientation": "any", /* Allow any orientation */
   "icons": [
     {
       "src": "/static/cnc/icons/icon-192x192.png",
@@ -24,7 +24,14 @@
       "src": "/static/cnc/icons/icon-maskable-512x512.png",
       "sizes": "512x512",
       "type": "image/png",
-      "purpose": "maskable"
+      "purpose": "maskable" /* Important for adaptive icons */
+    },
+    /* Add apple-touch-icon reference if you have the file */
+    {
+      "src": "/static/cnc/icons/apple-touch-icon.png", /* Example path */
+      "sizes": "180x180", /* Common size */
+      "type": "image/png"
+      /* No purpose needed for apple-touch-icon */
     }
   ]
 }
