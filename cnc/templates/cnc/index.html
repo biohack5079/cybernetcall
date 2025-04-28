@@ -6,32 +6,23 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>CyberNetCall</title>
   <link rel="manifest" href="{% static 'cnc/manifest.json' %}">
-  <!-- Standard favicon -->
   <link rel="icon" href="{% static 'cnc/icons/favicon.ico' %}" sizes="any">
-  <!-- Apple Touch Icon (for iOS home screen) -->
   <link rel="apple-touch-icon" href="{% static 'cnc/icons/apple-touch-icon.png' %}">
-  <!-- CSS -->
   <link rel="stylesheet" href="{% static 'cnc/style.css' %}">
-  <!-- External Libraries (defer loading) -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrious/4.0.2/qrious.min.js" defer></script>
   <script src="https://unpkg.com/idb@7/build/umd.js" defer></script>
   <script src="https://unpkg.com/html5-qrcode" defer></script>
-  <!-- Application Script -->
   <script src="{% static 'cnc/app.js' %}" defer></script>
 </head>
 <body>
-  <!-- Main application container for layout -->
   <div class="app-container">
 
-    <!-- Header Area -->
     <header class="app-header">
       <h1>CyberNetCall</h1>
       <div id="connectionStatus" class="connection-status"></div>
     </header>
 
-    <!-- Main Content Area (Video + Controls) -->
     <main class="main-content">
-      <!-- Video Meeting Section -->
       <section class="section video-meeting-section">
         <h2>Video Meeting</h2>
         <div class="video-container">
@@ -47,16 +38,16 @@
         <div class="call-controls">
           <button id="callButton" aria-label="Start/End Call">📞 Call</button>
           <button id="videoButton" aria-label="Toggle Video" style="display: none;">🎥 Video On</button>
-          <!-- File sending UI (basic) -->
+          <!-- File Sharing UI -->
           <div class="file-share">
-              <label for="fileInput" class="visually-hidden">Share File</label>
+              <label for="fileInput" class="visually-hidden">Select file to send</label>
               <input type="file" id="fileInput" aria-label="Select file to send">
-              <button id="sendFile">Send File</button>
+              <!-- Changed button ID -->
+              <button id="sendFileButton" disabled>Send File</button>
           </div>
         </div>
       </section>
 
-      <!-- Connection Setup Area (QR Code / Scanner) -->
       <section id="connection-setup" class="section connection-setup-section">
          <h2>Connection Setup</h2>
          <p>Scan the QR code or let your peer scan yours.</p>
@@ -66,9 +57,15 @@
       </section>
     </main>
 
-    <!-- Sidebar/Aside Area (Chat + Posts) -->
     <aside class="sidebar">
-      <!-- Direct Mail Section -->
+      <!-- File Transfer Status Area -->
+      <section class="section file-transfer-section">
+          <h2>File Transfers</h2>
+          <div id="fileTransferArea" class="file-transfer-area">
+              <!-- Status messages and download links will appear here -->
+          </div>
+      </section>
+
       <section class="section chat-section">
         <h2>Direct Mail</h2>
         <div id="messageArea" class="message-area"></div>
@@ -79,7 +76,6 @@
         </div>
       </section>
 
-      <!-- Group Chat Section -->
       <section class="section post-section">
         <h2>Group Chat</h2>
          <div id="postArea" class="post-area"></div>
@@ -91,7 +87,6 @@
       </section>
     </aside>
 
-  </div> <!-- End of app-container -->
-
+  </div>
 </body>
 </html>

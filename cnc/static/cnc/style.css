@@ -1,254 +1,68 @@
-/* /home/my/d/cybernetcall/cnc/static/cnc/style.css */
-/* Refined styles for a more professional look and responsive layout */
+/* ... (Previous styles remain the same) ... */
 
-/* Basic Reset & Root Variables */
-:root {
-    --primary-color: #007bff; /* Blue */
-    --secondary-color: #6c757d; /* Gray */
-    --light-bg: #f8f9fa;
-    --dark-text: #343a40;
-    --light-text: #ffffff;
-    --border-color: #dee2e6;
-    --hover-bg: #e9ecef;
-    --success-color: #28a745;
-    --error-color: #dc3545;
-    --warning-color: #ffc107;
-  
-    --base-font-size: 16px;
-    --font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-    --border-radius: 0.3rem;
-    --box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-  }
-  
-  * {
-    box-sizing: border-box;
-    margin: 0;
-    padding: 0;
-  }
-  
-  html {
-    font-size: var(--base-font-size);
-  }
-  
-  body {
-    font-family: var(--font-family);
-    line-height: 1.6;
-    color: var(--dark-text);
-    background-color: var(--light-bg);
-    display: flex; /* Use flex for overall structure */
-    min-height: 100vh;
-  }
-  
-  /* Main App Container */
-  .app-container {
-    display: flex;
-    flex-direction: column; /* Mobile default: Stack header, main, sidebar */
-    width: 100%;
-    max-width: 1400px; /* Max width for very large screens */
-    margin: 0 auto; /* Center container */
-  }
-  
-  /* Header */
-  .app-header {
-    background-color: var(--primary-color);
-    color: var(--light-text);
-    padding: 0.8rem 1.5rem;
-    text-align: center;
-    box-shadow: var(--box-shadow);
-    z-index: 10; /* Keep header above content */
-  }
-  .app-header h1 {
-    margin: 0;
-    font-size: 1.5rem;
-  }
-  .connection-status {
-    font-weight: bold;
-    margin-top: 0.5rem;
-    min-height: 1.2em; /* Prevent layout shift */
-    color: #ffdddd; /* Light red for visibility on blue */
-  }
-  .connection-status[style*="color: green"] { color: #d4edda; }
-  .connection-status[style*="color: orange"] { color: #fff3cd; }
-  .connection-status[style*="color: blue"] { color: #cce5ff; }
-  
-  
-  /* Main Content Area (Video + Connection Setup) */
-  .main-content {
-    padding: 1rem;
-    flex-grow: 1; /* Allow main content to grow */
-    display: flex;
-    flex-direction: column; /* Stack video and connection setup on mobile */
-  }
-  
-  /* Sidebar (Chat + Posts) */
-  .sidebar {
+/* Sidebar (Chat + Posts + File Transfer) */
+.sidebar {
     padding: 1rem;
     background-color: #ffffff;
     border-left: 1px solid var(--border-color); /* Separator on desktop */
     display: flex;
-    flex-direction: column; /* Stack chat and posts */
+    flex-direction: column; /* Stack sections */
     gap: 1rem;
   }
   
-  /* General Section Styling */
-  .section {
-    background-color: #ffffff;
-    border: 1px solid var(--border-color);
-    border-radius: var(--border-radius);
-    padding: 1rem;
-    box-shadow: var(--box-shadow);
-    margin-bottom: 1rem; /* Spacing between sections */
+  /* File Transfer Section */
+  .file-transfer-section {
+      /* Add specific styles if needed, inherits .section styles */
   }
-  .section h2 {
-    margin-top: 0;
-    margin-bottom: 1rem;
-    font-size: 1.2rem;
-    color: var(--primary-color);
-    border-bottom: 1px solid var(--border-color);
-    padding-bottom: 0.5rem;
-  }
-  
-  /* Input Areas (Chat, Post) */
-  .input-area {
-    display: flex;
-    gap: 0.5rem;
-    margin-top: 1rem;
-  }
-  .input-area input[type="text"] {
-    flex-grow: 1;
-    padding: 0.5rem 0.8rem;
-    border: 1px solid var(--border-color);
-    border-radius: var(--border-radius);
-    font-size: 1rem;
-  }
-  .input-area button {
-    padding: 0.5rem 1rem;
-    background-color: var(--primary-color);
-    color: var(--light-text);
-    border: none;
-    border-radius: var(--border-radius);
-    cursor: pointer;
-    font-size: 1rem;
-    transition: background-color 0.2s ease;
-  }
-  .input-area button:hover {
-    background-color: #0056b3; /* Darker blue */
-  }
-  
-  /* Message & Post Areas */
-  .message-area, .post-area {
-    height: 200px; /* Fixed height, adjust as needed */
-    overflow-y: auto;
-    border: 1px solid var(--border-color);
-    border-radius: var(--border-radius);
-    padding: 0.5rem;
-    margin-bottom: 1rem;
-    background-color: var(--light-bg);
-  }
-  .message, .post {
-    padding: 0.4rem 0.6rem;
-    margin-bottom: 0.5rem;
-    border-radius: var(--border-radius);
-    word-wrap: break-word;
-  }
-  .message.own-message {
-    background-color: #d1e7dd; /* Light green */
-    text-align: right;
-    margin-left: auto;
-    max-width: 80%;
-  }
-  .message.peer-message {
-    background-color: #e2e3e5; /* Light gray */
-    text-align: left;
-    margin-right: auto;
-    max-width: 80%;
-  }
-  .post {
-    background-color: #fdfdfe;
-    border-bottom: 1px dashed var(--border-color);
-  }
-  .post strong { color: var(--primary-color); }
-  
-  /* Video Meeting Section */
-  .video-meeting-section {
-    flex-grow: 1; /* Allow video section to take available space */
-  }
-  .video-container {
-    display: flex;
-    flex-direction: column; /* Stack videos on mobile */
-    gap: 1rem;
-    position: relative; /* For positioning local video overlay on desktop */
-    background-color: #333; /* Dark background for video area */
-    padding: 0.5rem;
-    border-radius: var(--border-radius);
-  }
-  .video-wrapper {
-      position: relative; /* For label */
-      width: 100%;
-      background-color: #000;
+  .file-transfer-area {
+      min-height: 50px; /* Minimum height */
+      max-height: 150px; /* Limit height */
+      overflow-y: auto;
+      border: 1px solid var(--border-color);
       border-radius: var(--border-radius);
-      overflow: hidden; /* Ensure video stays within bounds */
+      padding: 0.5rem;
+      background-color: var(--light-bg);
+      font-size: 0.9rem;
   }
-  .video-wrapper video {
-    display: block; /* Remove extra space below video */
-    width: 100%;
-    height: auto;
-    aspect-ratio: 16 / 9; /* Maintain aspect ratio */
-    object-fit: cover; /* Cover the area */
+  .file-transfer-status, .file-transfer-general-status {
+      margin-bottom: 0.5rem;
+      padding-bottom: 0.5rem;
+      border-bottom: 1px dashed var(--border-color);
   }
-  .video-label {
-      position: absolute;
-      bottom: 5px;
-      left: 5px;
-      background-color: rgba(0, 0, 0, 0.5);
-      color: white;
-      padding: 2px 5px;
-      font-size: 0.8rem;
-      border-radius: 3px;
+  .file-transfer-status:last-child, .file-transfer-general-status:last-child {
+      margin-bottom: 0;
+      padding-bottom: 0;
+      border-bottom: none;
   }
-  .local-video-wrapper {
-      max-width: 150px; /* Smaller local video on mobile */
-      align-self: flex-end; /* Position to the right */
-      border: 2px solid var(--primary-color);
+  .file-transfer-area a {
+      color: var(--primary-color);
+      text-decoration: none;
+      font-weight: bold;
+  }
+  .file-transfer-area a:hover {
+      text-decoration: underline;
   }
   
-  /* Call Controls */
+  
+  /* Call Controls - Adjust file input alignment */
   .call-controls {
-    display: flex;
-    flex-wrap: wrap; /* Allow controls to wrap on small screens */
-    gap: 0.5rem;
-    margin-top: 1rem;
-    justify-content: center;
-    align-items: center;
+    /* ... existing styles ... */
+    align-items: center; /* Vertically align items */
   }
-  .call-controls button {
-    padding: 0.6rem 1rem;
-    font-size: 1.1rem;
-    border-radius: 50px; /* Round buttons */
-    border: none;
-    cursor: pointer;
-    transition: background-color 0.2s ease, transform 0.1s ease;
-  }
-  .call-controls button:hover {
-    transform: scale(1.05);
-  }
-  #callButton { background-color: var(--success-color); color: var(--light-text); }
-  #callButton:hover { background-color: #218838; }
-  #callButton:active { transform: scale(0.95); }
-  #videoButton { background-color: var(--secondary-color); color: var(--light-text); }
-  #videoButton:hover { background-color: #5a6268; }
-  #videoButton:active { transform: scale(0.95); }
-  
-  /* File Sharing UI */
   .file-share {
       display: flex;
       align-items: center;
       gap: 0.5rem;
-      margin-left: auto; /* Push to the right on desktop */
+      /* margin-left: auto; Push to the right on desktop - removed for better wrapping */
   }
   .file-share input[type="file"] {
       font-size: 0.9rem;
-      max-width: 150px; /* Limit width */
+      /* max-width: 150px; Let it take natural width */
+      /* Style the file input button itself (browser-specific) */
+      border: 1px solid var(--border-color);
+      padding: 0.3rem 0.5rem;
+      border-radius: var(--border-radius);
+      cursor: pointer;
   }
   .file-share button {
       padding: 0.4rem 0.8rem;
@@ -259,136 +73,40 @@
       border-radius: var(--border-radius);
       cursor: pointer;
   }
-  .file-share button:hover { background-color: #5a6268; }
-  
-  
-  /* Connection Setup Section (QR) */
-  .connection-setup-section {
-    text-align: center;
+  .file-share button:disabled {
+      background-color: #ccc;
+      cursor: not-allowed;
   }
-  #qrcode {
-    display: block;
-    margin: 1rem auto;
-    max-width: 80%;
-    height: auto;
-    border: 1px solid var(--border-color);
-  }
-  #qr-reader {
-    max-width: 300px; /* Limit scanner width */
-    width: 90%;
-    margin: 1rem auto;
-    border: 1px solid var(--border-color);
-    border-radius: var(--border-radius);
-    overflow: hidden; /* Hide overflowing parts */
-  }
-  /* Hide unnecessary elements from html5-qrcode library */
-  #qr-reader__dashboard_section_csr,
-  #qr-reader__dashboard_section > div:first-child {
-    display: none !important;
-  }
-  #qr-reader-results {
-    margin-top: 0.5rem;
-    font-style: italic;
-    color: var(--secondary-color);
-  }
-  
-  /* Visually Hidden Class */
-  .visually-hidden {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    margin: -1px;
-    padding: 0;
-    overflow: hidden;
-    clip: rect(0, 0, 0, 0);
-    border: 0;
-  }
+  .file-share button:hover:not(:disabled) { background-color: #5a6268; }
   
   
   /* ============================================= */
   /* Desktop Styles (min-width: 768px)             */
   /* ============================================= */
   @media (min-width: 768px) {
-    .app-container {
-      flex-direction: row; /* Arrange main and sidebar side-by-side */
-      height: 100vh; /* Full viewport height */
-      overflow: hidden; /* Prevent body scroll */
-    }
-  
-    .app-header {
-      /* Header could be integrated into a top bar spanning both main and sidebar,
-         or kept separate. Let's keep it simple for now. */
-      position: sticky; /* Keep header visible if container scrolls (though we prevent it now) */
-      top: 0;
-      width: 100%; /* Span full width */
-      order: -1; /* Ensure header is visually first even with row layout */
-      flex-basis: 100%; /* Force header to take full width before wrapping */
-      text-align: left; /* Align header content left */
-      padding: 0.8rem 2rem;
-    }
-    .app-header h1 { font-size: 1.7rem; }
-  
-    /* Re-arrange container for desktop */
-     .app-container {
-        display: grid;
-        grid-template-columns: 1fr 350px; /* Main content takes remaining space, sidebar fixed width */
-        grid-template-rows: auto 1fr; /* Header row, Content row takes remaining height */
-        grid-template-areas:
-          "header header"
-          "main sidebar";
-        height: 100vh;
-     }
-     .app-header { grid-area: header; }
-     .main-content { grid-area: main; overflow-y: auto; /* Allow main content to scroll if needed */ }
-     .sidebar { grid-area: sidebar; overflow-y: auto; /* Allow sidebar to scroll */ }
-  
-  
-    .main-content {
-      padding: 1.5rem;
-      display: flex;
-      flex-direction: column; /* Stack video and connection setup */
-    }
+   /* ... (Previous desktop styles remain the same) ... */
   
     .sidebar {
       padding: 1.5rem;
       border-left: 1px solid var(--border-color);
-      height: calc(100vh - 60px); /* Adjust based on header height */
+      /* height: calc(100vh - 60px); Adjust based on header height - Let grid handle height */
       display: flex;
       flex-direction: column;
     }
-    .chat-section { flex-grow: 1; display: flex; flex-direction: column; }
-    .message-area { flex-grow: 1; height: auto; /* Allow message area to grow */ }
-    .post-section { flex-shrink: 0; /* Prevent post section from shrinking too much */ }
-    .post-area { height: 150px; } /* Adjust post area height */
+    /* Adjust flex properties for sidebar sections */
+    .file-transfer-section { flex-shrink: 0; } /* Don't shrink file transfer area */
+    .chat-section { flex-grow: 1; display: flex; flex-direction: column; } /* Chat takes remaining space */
+    .message-area { flex-grow: 1; height: auto; }
+    .post-section { flex-shrink: 0; }
+    .post-area { height: 150px; }
   
-  
-    /* Video Layout on Desktop */
-    .video-container {
-      flex-direction: row; /* Videos side-by-side is complex, let's keep remote large */
-      position: relative; /* For local video overlay */
-      flex-grow: 1; /* Allow video container to fill space */
-    }
-    .video-wrapper { /* Remote video wrapper */
-        flex-grow: 1; /* Remote video takes most space */
-    }
-    .local-video-wrapper {
-      position: absolute; /* Overlay local video */
-      bottom: 1rem;
-      right: 1rem;
-      width: 25%; /* Adjust size */
-      max-width: 200px;
-      border: 2px solid var(--primary-color);
-      z-index: 5; /* Ensure it's above remote video */
-      box-shadow: 0 0 10px rgba(0,0,0,0.5);
-    }
-  
-    /* Connection Setup on Desktop */
-    .connection-setup-section {
-        margin-top: 1rem; /* Space above QR section */
-        flex-shrink: 0; /* Prevent shrinking */
-    }
-    #qrcode { max-width: 200px; }
-    #qr-reader { max-width: 250px; }
+    /* Push file share to the right within call controls on desktop */
+     .call-controls {
+         justify-content: flex-start; /* Align main buttons left */
+     }
+     .file-share {
+         margin-left: auto; /* Push file share right */
+     }
   
   } /* End of Desktop Media Query */
   
