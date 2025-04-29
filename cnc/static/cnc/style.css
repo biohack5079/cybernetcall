@@ -1,112 +1,38 @@
-/* ... (Previous styles remain the same) ... */
 
-/* Sidebar (Chat + Posts + File Transfer) */
-.sidebar {
-    padding: 1rem;
-    background-color: #ffffff;
-    border-left: 1px solid var(--border-color); /* Separator on desktop */
+body {
     display: flex;
-    flex-direction: column; /* Stack sections */
-    gap: 1rem;
-  }
-  
-  /* File Transfer Section */
-  .file-transfer-section {
-      /* Add specific styles if needed, inherits .section styles */
-  }
-  .file-transfer-area {
-      min-height: 50px; /* Minimum height */
-      max-height: 150px; /* Limit height */
-      overflow-y: auto;
-      border: 1px solid var(--border-color);
-      border-radius: var(--border-radius);
-      padding: 0.5rem;
-      background-color: var(--light-bg);
-      font-size: 0.9rem;
-  }
-  .file-transfer-status, .file-transfer-general-status {
-      margin-bottom: 0.5rem;
-      padding-bottom: 0.5rem;
-      border-bottom: 1px dashed var(--border-color);
-  }
-  .file-transfer-status:last-child, .file-transfer-general-status:last-child {
-      margin-bottom: 0;
-      padding-bottom: 0;
-      border-bottom: none;
-  }
-  .file-transfer-area a {
-      color: var(--primary-color);
-      text-decoration: none;
-      font-weight: bold;
-  }
-  .file-transfer-area a:hover {
-      text-decoration: underline;
-  }
-  
-  
-  /* Call Controls - Adjust file input alignment */
-  .call-controls {
-    /* ... existing styles ... */
-    align-items: center; /* Vertically align items */
-  }
-  .file-share {
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
-      /* margin-left: auto; Push to the right on desktop - removed for better wrapping */
-  }
-  .file-share input[type="file"] {
-      font-size: 0.9rem;
-      /* max-width: 150px; Let it take natural width */
-      /* Style the file input button itself (browser-specific) */
-      border: 1px solid var(--border-color);
-      padding: 0.3rem 0.5rem;
-      border-radius: var(--border-radius);
-      cursor: pointer;
-  }
-  .file-share button {
-      padding: 0.4rem 0.8rem;
-      font-size: 0.9rem;
-      background-color: var(--secondary-color);
-      color: var(--light-text);
-      border: none;
-      border-radius: var(--border-radius);
-      cursor: pointer;
-  }
-  .file-share button:disabled {
-      background-color: #ccc;
-      cursor: not-allowed;
-  }
-  .file-share button:hover:not(:disabled) { background-color: #5a6268; }
-  
-  
-  /* ============================================= */
-  /* Desktop Styles (min-width: 768px)             */
-  /* ============================================= */
-  @media (min-width: 768px) {
-   /* ... (Previous desktop styles remain the same) ... */
-  
-    .sidebar {
-      padding: 1.5rem;
-      border-left: 1px solid var(--border-color);
-      /* height: calc(100vh - 60px); Adjust based on header height - Let grid handle height */
-      display: flex;
-      flex-direction: column;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    font-family: Arial, sans-serif;
+    min-height: 100vh;
+    margin: 0;
+    padding: 1rem;
     }
-    /* Adjust flex properties for sidebar sections */
-    .file-transfer-section { flex-shrink: 0; } /* Don't shrink file transfer area */
-    .chat-section { flex-grow: 1; display: flex; flex-direction: column; } /* Chat takes remaining space */
-    .message-area { flex-grow: 1; height: auto; }
-    .post-section { flex-shrink: 0; }
-    .post-area { height: 150px; }
-  
-    /* Push file share to the right within call controls on desktop */
-     .call-controls {
-         justify-content: flex-start; /* Align main buttons left */
-     }
-     .file-share {
-         margin-left: auto; /* Push file share right */
-     }
-  
-  } /* End of Desktop Media Query */
-  
+    .section {
+    max-width: 400px;
+    width: 100%;
+    margin: 1rem auto;
+    border: 1px solid #ccc;
+    padding: 1rem;
+    border-radius: 8px;
+    }
+    .call-controls {
+    display: flex;
+    gap: 10px;
+    margin-top: 10px;
+    justify-content: center;
+    }
+    #qr-reader {
+    width: 300px;
+    margin: 20px auto;
+    }
+    #qr-reader__dashboard_section_csr {
+    display: none;
+    }
+    video {
+    width: 100%;
+    max-width: 300px;
+    margin: 10px 0;
+    }
