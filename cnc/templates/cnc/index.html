@@ -2,7 +2,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  
+
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>CyberNetCall</title>
@@ -29,7 +29,10 @@
   <canvas id="qrcode"></canvas>
 
   <!-- QRコードリーダー用 -->
-  <div id="qr-reader" style="width: 300px; margin: 20px auto;"></div>
+  <!-- ★ スキャン開始ボタンを追加 -->
+  <button id="startScanButton" style="margin-top: 1rem;">Scan QR Code</button>
+  <!-- ★ 初期状態は非表示に -->
+  <div id="qr-reader" style="width: 300px; margin: 20px auto; display: none;"></div>
   <div id="qr-reader-results" style="margin-top: 10px; font-style: italic;"></div>
 
   <!-- Direct Mail セクション -->
@@ -59,13 +62,14 @@
     </div>
     <div class="call-controls">
       <button id="callButton" aria-label="Start/End Call">📞</button>
-      <button id="videoButton" aria-label="Toggle Video" style="display: none;">🎥</button>
+      <button id="videoButton" aria-label="Toggle Video">🎥</button> <!-- style="display: none;" は削除済み -->
     </div>
-    <!-- ファイル送信機能 (スタブ) -->
+    <!-- ファイル送信機能 -->
     <div style="margin-top: 1rem;">
         <label for="fileInput">Share File:</label>
         <input type="file" id="fileInput">
         <button id="sendFile">Send File</button>
+        <span id="file-transfer-status" style="margin-left: 10px; font-style: italic;"></span> <!-- Status display -->
     </div>
   </section>
 
@@ -74,3 +78,4 @@
 
 </body>
 </html>
+
