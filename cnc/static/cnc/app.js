@@ -98,8 +98,9 @@ function displayPost(post, isNew = true) {
   const div = document.createElement('div');
   div.className = 'post';
   // 投稿内容と投稿者ID（短縮）などを表示する例
-  div.innerHTML = `<strong>${post.sender ? post.sender.substring(0, 6) : 'Unknown'}:</strong> ${post.content}`;
-  // div.textContent = post.content; // シンプル版
+  // ★ XSS対策: innerHTMLに設定する前にDOMPurifyでサニタイズ
+  const unsafeHTML = `<strong>${post.sender ? post.sender.substring(0, 6) : 'Unknown'}:</strong> ${post.content}`;
+  div.innerHTML = DOMPurify.sanitize(unsafeHTML);
   if (isNew && postAreaElement.firstChild) {
       postAreaElement.insertBefore(div, postAreaElement.firstChild);
   } else {
@@ -398,7 +399,11 @@ function displayDirectMessage(message, isOwnMessage = false) {
     const div = document.createElement('div');
     div.classList.add('message', isOwnMessage ? 'own-message' : 'peer-message');
     // 送信者IDを表示する例
-    div.innerHTML = `<strong>${isOwnMessage ? 'You' : (message.sender ? message.sender.substring(0, 6) : 'Peer')}:</strong> ${message.content}`;
+    
+    // ★ XSS対策: innerHTMLに設定する前にDOMPurifyでサニタイズ
+    const unsafeHTML = `<strong>${isOwnMessage ? 'You' : (message.sender ? message.sender.substring(0, 6) : 'Peer')}:</strong> ${message.content}`;
+    div.innerHTML = DOMPurify.sanitize(unsafeHTML);
+
     // div.textContent = message.content; // 内容のみ
     messageAreaElement.appendChild(div);
     messageAreaElement.scrollTop = messageAreaElement.scrollHeight; // 自動スクロール
