@@ -1,25 +1,30 @@
-	
-name	"CyberNetCall"
-short_name	"CNC"
-description	"Peer-to-peer communication app using WebRTC."
-start_url	"/"
-display	"standalone"
-background_color	"#ffffff"
-theme_color	"#007bff"
-orientation	"portrait-primary"
-icons	
-0	
-src	"/static/cnc/icons/icon-192x192.png"
-sizes	"192x192"
-type	"image/png"
-purpose	"any"
-1	
-src	"/static/cnc/icons/icon-512x512.png"
-sizes	"512x512"
-type	"image/png"
-purpose	"any"
-2	
-src	"/static/cnc/icons/icon-maskable-512x512.png"
-sizes	"512x512"
-type	"image/png"
-purpose	"maskable"
+{
+  "name": "CyberNetCall",
+  "short_name": "CNC",
+  "description": "Peer-to-peer communication app using WebRTC.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#007bff",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/static/cnc/icons/icon-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/static/cnc/icons/icon-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/static/cnc/icons/icon-maskable-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}
