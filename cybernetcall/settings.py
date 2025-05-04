@@ -88,12 +88,12 @@ WSGI_APPLICATION = 'cybernetcall.wsgi.application'
 
 CHANNEL_LAYERS = {
     "default": {
-        # "BACKEND": "channels_redis.core.RedisChannelLayer",
-        # "CONFIG": {
-        #     "hosts": [REDIS_URL],
-        # },
+        "BACKEND": "channels_redis.core.RedisChannelLayer",
+        "CONFIG": {
+            "hosts": [env('REDIS_URL', default='redis://localhost:6379')],
+        },
         # 開発中はインメモリバックエンドでもOK
-        "BACKEND": "channels.layers.InMemoryChannelLayer"
+        #"BACKEND": "channels.layers.InMemoryChannelLayer"
     },
 }
 
