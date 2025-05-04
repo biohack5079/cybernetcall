@@ -1,30 +1,16 @@
-# myproject/middleware.py (または cnc/middleware.py)
+from django.utils.deprecation import MiddlewareMixin
+from django.conf import settings
+# import os # Not needed
+# from django.urls import get_script_prefix # Not needed for simple check
+# from urllib.parse import urljoin # Not needed for simple check
 
-class ServiceWorkerAllowedHeaderMiddleware:
-    def __init__(self, get_response):
-        """
-        ミドルウェアの初期化時に一度だけ呼ばれる。
-        get_response: 次のミドルウェアまたはビューへの参照。
-        """
-        self.get_response = get_response
-        # 初期化時に必要な処理があればここに書く
+class ServiceWorkerAllowedHeaderMiddleware(MiddlewareMixin):
+    def process_response(self, request, response):
+        # よりシンプルなパスチェック: リクエストパスが期待されるService Workerのパスで終わるか？
+        expected_sw_path_suffix = '/static/cnc/service-worker.js'
+        print(f"[Middleware] Checking request path: '{request.path}' against suffix: '{expected_sw_path_suffix}'") # Log every check
 
-    def __call__(self, request):
-        """
-        リクエストごとに呼ばれる。
-        request: HttpRequestオブジェクト。
-        """
-        # まず、次のミドルウェアまたはビューを呼び出し、レスポンスを取得する
-        response = self.get_response(request)
-
-        # リクエストされたパスが Service Worker のパスと一致するか確認
-        # ★注意: STATIC_URL が '/static/' で、ファイルが cnc/static/cnc/ にある前提
-        # もし構成が違う場合は、このパスを実際のURLに合わせて変更してください。
-        if request.path == '/static/cnc/service-worker.js':
-            # パスが一致した場合のみ、レスポンスにヘッダーを追加
-            print(f"Adding Service-Worker-Allowed header for: {request.path}") # デバッグ用ログ
+        if request.path.endswith(expected_sw_path_suffix):
+            print(f"[Middleware] Path matched! Adding Service-Worker-Allowed header for '{request.path}'") # Log when header is added
             response['Service-Worker-Allowed'] = '/'
-
-        # 変更を加えた（かもしれない）レスポンスを返す
         return response
-

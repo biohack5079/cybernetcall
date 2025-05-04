@@ -11,12 +11,11 @@ https://docs.djangoproject.com/en/5.0/ref/settings/
 """
 
 from pathlib import Path
-# ↓ 追加
+
 import os
 import environ
 from decouple import config
 from dj_database_url import parse as dburl
-
 
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -34,12 +33,13 @@ SECRET_KEY = 'django-insecure-vaj*zpu!9^3=8%=_n(*9z39dq29l!mbf49rz(jr62k744wvl7j
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = False
 
-ALLOWED_HOSTS = ['cybernetcall.onrender.com', '127.0.0.1', 'localhost']
+ALLOWED_HOSTS = ['cybernetcall.onrender.com']
 
 
 # Application definition
 
 INSTALLED_APPS = [
+    'daphne',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -47,12 +47,14 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'cnc',
+    'signaling', # WebSocketシグナリング用アプリを追加
+    'channels', # Django Channels を追加
 ]
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
-    'cnc.middleware.ServiceWorkerAllowedHeaderMiddleware', 
     'whitenoise.middleware.WhiteNoiseMiddleware',
+    'cnc.middleware.ServiceWorkerAllowedHeaderMiddleware', 
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -61,7 +63,7 @@ MIDDLEWARE = [
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
 
-ROOT_URLCONF = 'mysite.urls'
+ROOT_URLCONF = 'cybernetcall.urls'
 
 TEMPLATES = [
     {
@@ -79,8 +81,21 @@ TEMPLATES = [
     },
 ]
 
-WSGI_APPLICATION = 'mysite.wsgi.application'
+ASGI_APPLICATION = 'cybernetcall.asgi.application'
+WSGI_APPLICATION = 'cybernetcall.wsgi.application'
 
+# REDIS_URL = os.environ.get('REDIS_URL', 'redis://localhost:6379/1') # /1 などDB番号を指定推奨
+
+CHANNEL_LAYERS = {
+    "default": {
+        # "BACKEND": "channels_redis.core.RedisChannelLayer",
+        # "CONFIG": {
+        #     "hosts": [REDIS_URL],
+        # },
+        # 開発中はインメモリバックエンドでもOK
+        "BACKEND": "channels.layers.InMemoryChannelLayer"
+    },
+}
 
 # Database
 # https://docs.djangoproject.com/en/5.0/ref/settings/#databases
