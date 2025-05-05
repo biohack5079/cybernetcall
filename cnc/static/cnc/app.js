@@ -522,12 +522,14 @@ async function createOfferAndSetLocal(peerUUID) {
 
 async function handleOfferAndCreateAnswer(peerUUID, offerSdp) {
   let peer = peers[peerUUID];
-  if (!peer) {
+  const isRenegotiation = !!peer;
+
+  if (!isRenegotiation) {
        console.log(`No existing PeerConnection for ${peerUUID}. Creating one...`);
        peer = await createPeerConnection(peerUUID);
        if (!peer) {
            console.error(`Failed to create PeerConnection for ${peerUUID} to handle offer.`);
-           return null;
+           return;
        }
   }
   console.log(`Received offer from ${peerUUID}, setting remote description...`);
@@ -554,11 +556,11 @@ async function handleOfferAndCreateAnswer(peerUUID, offerSdp) {
         type: 'answer',
         payload: { target: peerUUID, sdp: peer.localDescription }
     });
+    console.log(`Sent ${isRenegotiation ? 'renegotiation ' : ''}answer to ${peerUUID}.`);
   } catch (error) {
     console.error(`Error handling offer or creating/setting answer for ${peerUUID}:`, error);
     updateStatus(`Offer handling / Answer creation error for ${peerUUID}: ${error.message}`, 'red');
     closePeerConnection(peerUUID);
-    return null;
   }
 }
 
@@ -568,7 +570,8 @@ async function handleAnswer(peerUUID, answerSdp) {
        console.error(`Cannot handle answer: PeerConnection for ${peerUUID} not found.`);
        return null;
   }
-  console.log(`Received answer from ${peerUUID}, setting remote description...`);
+  const isRenegotiationAnswer = peer.signalingState === 'have-local-offer';
+  console.log(`Received ${isRenegotiationAnswer ? 'renegotiation ' : ''}answer from ${peerUUID}, setting remote description...`);
   try {
     await peer.setRemoteDescription(new RTCSessionDescription(answerSdp));
     console.log(`Remote description set with answer for ${peerUUID}. Connection should establish soon.`);
@@ -743,6 +746,7 @@ async function processTextMessage(dataString, senderUUID) {
                 };
                 receiveBuffer[message.fileId] = [];
                 receivedSize[message.fileId] = 0;
+                console.log(`[File Metadata] Initialized receivedSize for ${message.fileId} to 0`); // Add log
                 console.log(`Receiving metadata for file: ${message.name} (${message.size} bytes) from ${senderUUID.substring(0,6)}`);
                 if (fileTransferStatusElement) {
                     fileTransferStatusElement.textContent = `Receiving ${message.name}... 0%`;
@@ -783,7 +787,19 @@ function processFileChunk(chunkMessage) {
         const chunk = byteArray.buffer;
 
         receiveBuffer[fileId][chunkIndex] = chunk;
+
+        if ((receivedSize[fileId] + chunk.byteLength) > incomingFileInfo[fileId].size && !isLast) {
+             console.error(`[File Receive Error] Receiving chunk ${chunkIndex} for file ${fileId} would exceed expected size (${incomingFileInfo[fileId].size}). Aborting.`);
+             if (fileTransferStatusElement) fileTransferStatusElement.textContent = `Error receiving ${incomingFileInfo[fileId].name} (size mismatch)`;
+             delete incomingFileInfo[fileId];
+             delete receiveBuffer[fileId];
+             delete receivedSize[fileId];
+             return;
+        }
+        const sizeBeforeAdd = receivedSize[fileId];
         receivedSize[fileId] += chunk.byteLength;
+
+        console.log(`[File Chunk] ID: ${fileId}, Index: ${chunkIndex}, Size: ${chunk.byteLength}, Total Received: ${receivedSize[fileId]}, Expected Size: ${incomingFileInfo[fileId].size}, Is Last: ${isLast}`);
 
         const progress = Math.round((receivedSize[fileId] / incomingFileInfo[fileId].size) * 100);
          if (fileTransferStatusElement) {
@@ -973,11 +989,11 @@ function handleSendFile() {
         if (openChannels.length > 0) {
             const firstChannel = openChannels[0][1];
             const bufferedAmount = firstChannel.bufferedAmount || 0;
-            if (bufferedAmount > CHUNK_SIZE * 16) {
+            if (bufferedAmount > CHUNK_SIZE * 8) {
                 console.warn(`DataChannel buffer high (${bufferedAmount}), pausing send...`);
                 setTimeout(() => {
                     sendFileChunk(chunk, file, fileId, chunkIndex, offset);
-                }, 100);
+                }, 200);
                 return;
             }
         } else {
@@ -1036,7 +1052,7 @@ function handleSendFile() {
              console.error(`Error sending chunk ${currentChunkIndex}:`, error);
              if (retryCount < 3) {
                  console.log(`Retrying chunk ${currentChunkIndex} (attempt ${retryCount + 1})...`);
-                 setTimeout(() => sendFileChunk(chunkData, originalFile, currentFileId, currentChunkIndex, currentOffset, retryCount + 1), 500);
+                 setTimeout(() => sendFileChunk(chunkData, originalFile, currentFileId, currentChunkIndex, currentOffset, retryCount + 1), 1000);
              } else {
                  alert(`Failed to send chunk ${currentChunkIndex} after multiple retries.`);
                  if (fileTransferStatusElement) fileTransferStatusElement.textContent = 'Chunk send error';
@@ -1059,47 +1075,86 @@ async function toggleVideoCall() {
         try {
             localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
             if (localVideoElement) localVideoElement.srcObject = localStream;
-            Object.entries(peers).forEach(([peerUUID, peer]) => {
+
+            const renegotiationPromises = Object.entries(peers).map(async ([peerUUID, peer]) => {
+                console.log(`[toggleVideoCall START] Processing peer: ${peerUUID}, State: ${peer?.connectionState}`); // Add log
                 if (peer) {
                     localStream.getTracks().forEach(track => {
                         try {
                             if (peer.addTrack) {
-                                peer.addTrack(track, localStream);
+                                const sender = peer.addTrack(track, localStream);
                                 console.log(`Added ${track.kind} track to ${peerUUID}`);
                             } else { console.warn(`peer.addTrack is not supported for ${peerUUID}.`); }
                         } catch (e) { console.error(`Error adding track to ${peerUUID}:`, e); }
                     });
-                    console.warn(`Tracks added to existing connection ${peerUUID}. Renegotiation might be needed.`);
+                    console.log(`[toggleVideoCall START] Attempting renegotiation for ${peerUUID}`); // Add log
+                    await createAndSendOfferForRenegotiation(peerUUID, peer);
                 }
             });
+            await Promise.all(renegotiationPromises);
+
+            const videoTrack = localStream.getVideoTracks()[0];
+            if (videoTrack) {
+                videoTrack.enabled = false;
+                if(videoButton) videoButton.textContent = '🚫';
+                console.log(`Local video started disabled`);
+            }
             if(callButton) callButton.textContent = 'End Call';
         } catch (error) {
-            console.error("Error starting video call:", error);
+            console.error(`Error starting video call (getUserMedia): Name: ${error.name}, Message: ${error.message}`, error);
             alert(`Media access error: ${error.message}`);
             localStream = null;
         }
     } else {
         console.log("Ending video call...");
         localStream.getTracks().forEach(track => track.stop());
+        const tracksToRemove = localStream.getTracks();
         localStream = null;
-        Object.entries(peers).forEach(([peerUUID, peer]) => {
+
+        const renegotiationPromises = Object.entries(peers).map(async ([peerUUID, peer]) => {
+            console.log(`[toggleVideoCall END] Processing peer: ${peerUUID}, State: ${peer?.connectionState}`); // Add log
             if (peer) {
                 peer.getSenders().forEach(sender => {
-                    if (sender.track) {
+                    if (sender && sender.track && tracksToRemove.includes(sender.track)) { 
                         try {
                             if (peer.removeTrack) {
                                 peer.removeTrack(sender);
-                                console.log(`Removed track from ${peerUUID}`);
+                                console.log(`Removed ${sender.track.kind} track from ${peerUUID}`);
                             } else { console.warn(`peer.removeTrack is not supported for ${peerUUID}.`); }
                         } catch (e) { console.error(`Error removing track from ${peerUUID}:`, e); }
                     }
                 });
-                 console.warn(`Tracks removed from existing connection ${peerUUID}. Renegotiation might be needed.`);
+                console.log(`[toggleVideoCall END] Attempting renegotiation for ${peerUUID}`); // Add log
+                await createAndSendOfferForRenegotiation(peerUUID, peer);
             }
         });
+        await Promise.all(renegotiationPromises);
+
         if(localVideoElement) localVideoElement.srcObject = null;
         if(callButton) callButton.textContent = '📞';
         if(videoButton) videoButton.textContent = '🎥';
+    }
+}
+
+async function createAndSendOfferForRenegotiation(peerUUID, peer) {
+    if (!peer || peer.connectionState !== 'connected') {
+        console.warn(`Cannot renegotiate with ${peerUUID}, connection not established.`);
+        return;
+    }
+    console.log(`Starting renegotiation with ${peerUUID}...`);
+    try {
+        console.log(`[Renegotiation] Creating offer for ${peerUUID}...`); // Add log
+        const offer = await peer.createOffer();
+        console.log(`[Renegotiation] Offer created for ${peerUUID}. Setting local description...`); // Add log
+        await peer.setLocalDescription(offer);
+        console.log(`[Renegotiation] Local description set for ${peerUUID}.`); // Add log
+        console.log(`Renegotiation offer created for ${peerUUID}, sending...`);
+        sendSignalingMessage({
+            type: 'offer',
+            payload: { target: peerUUID, sdp: peer.localDescription }
+        });
+    } catch (error) {
+        console.error(`Error during renegotiation offer for ${peerUUID}:`, error);
     }
 }
 
@@ -1115,6 +1170,7 @@ function toggleLocalVideo() {
 }
 
 function handleRemoteTrack(peerUUID, track, stream) {
+    console.log(`[handleRemoteTrack] Called for peer ${peerUUID}, track kind: ${track.kind}, stream ID: ${stream?.id}`); // Add log
     if (!remoteVideosContainer) {
         console.warn("Remote videos container not found.");
         return;

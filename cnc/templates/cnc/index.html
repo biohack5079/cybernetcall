@@ -56,9 +56,10 @@
   <!-- Group Meeting セクション (1対1ビデオ通話) -->
   <section class="section">
     <h2>Video Meeting</h2>
+    
     <div class="video-container">
-      <video id="localVideo" autoplay muted playsinline></video>
-      <video id="remoteVideo" autoplay playsinline></video>
+      <video id="localVideo" autoplay muted playsinline style="width: 30%; border: 1px solid grey;"></video>
+      <div id="remoteVideosContainer" style="display: flex; flex-wrap: wrap;"></div>
     </div>
     <div class="call-controls">
       <button id="callButton" aria-label="Start/End Call">📞</button>
@@ -74,7 +75,8 @@
   </section>
 
   <!-- friendList は現在未使用のためコメントアウトまたは削除 -->
-  <!-- <div id="friendList"></div> -->
+  <!--   <div id="friendList"></div> -->
+
 
 </body>
 </html>
