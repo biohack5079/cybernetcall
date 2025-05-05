@@ -278,10 +278,18 @@ async function connectWebSocket() {
         case 'user_joined':
         case 'user_online':
             const joinedUUID = message.uuid;
-            if (joinedUUID && joinedUUID !== myDeviceId) {
-                console.log(`Peer ${joinedUUID} is online.`);
-                updateStatus(`Peer ${joinedUUID.substring(0,6)} is online`, 'blue');
+            if (joinedUUID && joinedUUID !== myDeviceId && messageType === 'user_joined') { // user_joined の場合のみ処理
+                console.log(`Peer ${joinedUUID} joined the room.`);
+                updateStatus(`Peer ${joinedUUID.substring(0,6)} joined. Attempting to connect...`, 'blue');
                 await displayFriendList();
+                // --- 自動接続処理を追加 ---
+                // 既に接続試行中または接続済みでないか確認
+                if (!peers[joinedUUID] || (peers[joinedUUID].connectionState !== 'connected' && peers[joinedUUID].connectionState !== 'connecting')) {
+                    console.log(`Auto-connecting to newly joined peer: ${joinedUUID}`);
+                    await createOfferForPeer(joinedUUID); // Offerを送信して接続を開始
+                } else {
+                    console.log(`Already connected or connecting to ${joinedUUID}, skipping auto-connect.`);
+                }
             }
             break;
         case 'user_left':
@@ -1534,3 +1542,4 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
 });
+
