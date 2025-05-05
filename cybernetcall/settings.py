@@ -18,6 +18,7 @@ from decouple import config
 from dj_database_url import parse as dburl
 
 
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -86,16 +87,19 @@ WSGI_APPLICATION = 'cybernetcall.wsgi.application'
 
 # REDIS_URL = os.environ.get('REDIS_URL', 'redis://localhost:6379/1') # /1 などDB番号を指定推奨
 
+redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379") 
+
 CHANNEL_LAYERS = {
     "default": {
         "BACKEND": "channels_redis.core.RedisChannelLayer",
         "CONFIG": {
-            "hosts": [REDIS_URL],
+            "hosts": [redis_url],
         },
         # 開発中はインメモリバックエンドでもOK
         # "BACKEND": "channels.layers.InMemoryChannelLayer"
     },
 }
+
 
 # Database
 # https://docs.djangoproject.com/en/5.0/ref/settings/#databases
