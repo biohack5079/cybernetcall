@@ -73,8 +73,7 @@
 
     if (scrollLeftButton && scrollRightButton && videoScrollContainer) {
       scrollLeftButton.addEventListener('click', () => {
-        videoScrollContainer.scrollBy({ left: -300, behavior: 'smooth' }); // スクロール量とアニメーション
-      });
+        videoScrollContainer.scrollBy({ left: -300, behavior: 'smooth' });
 
       scrollRightButton.addEventListener('click', () => {
         videoScrollContainer.scrollBy({ left: 300, behavior: 'smooth' });
