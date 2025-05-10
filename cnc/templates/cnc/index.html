@@ -2,40 +2,29 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>CyberNetCall</title>
   <link rel="manifest" href="{% static 'cnc/manifest.json' %}">
-  <!-- アイコンパスを修正 (manifest.json に合わせる) -->
   <link rel="icon" href="{% static 'cnc/icons/icon-192x192.png' %}">
-  <!-- CSSファイルを読み込む -->
   <link rel="stylesheet" href="{% static 'cnc/style.css' %}">
-  <!-- 外部ライブラリ (deferで非同期読み込み) -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/2.3.10/purify.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrious/4.0.2/qrious.min.js" defer></script>
   <script src="https://unpkg.com/idb@7/build/umd.js" defer></script>
   <script src="https://unpkg.com/html5-qrcode" defer></script>
-  <!-- アプリケーション本体のJavaScript -->
   <script src="{% static 'cnc/app.js' %}" defer></script>
 </head>
 <body>
   <h1>CyberNetCall</h1>
-  <!-- 接続状態表示用 -->
   <div id="connectionStatus" style="display: none; font-weight: bold; margin-bottom: 1rem;"></div>
   <p>Scan the QR code or let your friend scan yours to connect.</p>
 
-  <!-- QRコード表示用 -->
   <canvas id="qrcode"></canvas>
 
-  <!-- QRコードリーダー用 -->
-  <!-- ★ スキャン開始ボタンを追加 -->
   <button id="startScanButton" style="margin-top: 1rem;">Scan QR Code</button>
-  <!-- ★ 初期状態は非表示に -->
   <div id="qr-reader" style="width: 300px; margin: 20px auto; display: none;"></div>
   <div id="qr-reader-results" style="margin-top: 10px; font-style: italic;"></div>
 
-  <!-- Direct Mail セクション -->
   <section class="section">
     <h2>Direct Mail</h2>
     <label for="messageInput" class="visually-hidden">Direct Message</label>
@@ -44,7 +33,6 @@
     <div id="messageArea" class="message-area"></div>
   </section>
 
-  <!-- Post Friends セクション -->
   <section class="section">
     <h2>Group Chat</h2>
     <label for="postInput" class="visually-hidden">Post Friends</label>
@@ -53,30 +41,47 @@
     <div id="postArea" class="post-area"></div>
   </section>
 
-  <!-- Group Meeting セクション (1対1ビデオ通話) -->
   <section class="section">
     <h2>Video Meeting</h2>
     
     <div class="video-container">
-      <video id="localVideo" autoplay muted playsinline style="width: 30%; border: 1px solid grey;"></video>
-      <div id="remoteVideosContainer" style="display: flex; flex-wrap: wrap;"></div>
+      <div class="video-scroll-container">
+        <video id="localVideo" autoplay muted playsinline></video>
+        <!-- Remote video elements will be added here by app.js -->
+      </div>
+      <div class="video-scroll-controls">
+        <button id="scrollLeft">←</button>
+        <button id="scrollRight">→</button>
+      </div>
     </div>
     <div class="call-controls">
       <button id="callButton" aria-label="Start/End Call">📞</button>
-      <button id="videoButton" aria-label="Toggle Video">🎥</button> <!-- style="display: none;" は削除済み -->
+      <button id="videoButton" aria-label="Toggle Video">🎥</button>
     </div>
-    <!-- ファイル送信機能 -->
     <div style="margin-top: 1rem;">
         <label for="fileInput">Share File:</label>
         <input type="file" id="fileInput">
         <button id="sendFile">Send File</button>
-        <span id="file-transfer-status" style="margin-left: 10px; font-style: italic;"></span> <!-- Status display -->
+        <span id="file-transfer-status" style="margin-left: 10px; font-style: italic;"></span>
     </div>
   </section>
 
-  <!-- friendList は現在未使用のためコメントアウトまたは削除 -->
-  <!--   <div id="friendList"></div> -->
+  <script>
+    const scrollLeftButton = document.getElementById('scrollLeft');
+    const scrollRightButton = document.getElementById('scrollRight');
+    const videoScrollContainer = document.querySelector('.video-scroll-container');
 
+    if (scrollLeftButton && scrollRightButton && videoScrollContainer) {
+      scrollLeftButton.addEventListener('click', () => {
+        videoScrollContainer.scrollBy({ left: -300, behavior: 'smooth' }); // スクロール量とアニメーション
+      });
+
+      scrollRightButton.addEventListener('click', () => {
+        videoScrollContainer.scrollBy({ left: 300, behavior: 'smooth' });
+      });
+    }
+  </script>
 
 </body>
 </html>
+

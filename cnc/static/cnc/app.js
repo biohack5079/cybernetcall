@@ -278,15 +278,13 @@ async function connectWebSocket() {
         case 'user_joined':
         case 'user_online':
             const joinedUUID = message.uuid;
-            if (joinedUUID && joinedUUID !== myDeviceId && messageType === 'user_joined') { // user_joined の場合のみ処理
+            if (joinedUUID && joinedUUID !== myDeviceId && messageType === 'user_joined') {
                 console.log(`Peer ${joinedUUID} joined the room.`);
                 updateStatus(`Peer ${joinedUUID.substring(0,6)} joined. Attempting to connect...`, 'blue');
                 await displayFriendList();
-                // --- 自動接続処理を追加 ---
-                // 既に接続試行中または接続済みでないか確認
                 if (!peers[joinedUUID] || (peers[joinedUUID].connectionState !== 'connected' && peers[joinedUUID].connectionState !== 'connecting')) {
                     console.log(`Auto-connecting to newly joined peer: ${joinedUUID}`);
-                    await createOfferForPeer(joinedUUID); // Offerを送信して接続を開始
+                    await createOfferForPeer(joinedUUID);
                 } else {
                     console.log(`Already connected or connecting to ${joinedUUID}, skipping auto-connect.`);
                 }
@@ -754,7 +752,7 @@ async function processTextMessage(dataString, senderUUID) {
                 };
                 receiveBuffer[message.fileId] = [];
                 receivedSize[message.fileId] = 0;
-                console.log(`[File Metadata] Initialized receivedSize for ${message.fileId} to 0`); // Add log
+                console.log(`[File Metadata] Initialized receivedSize for ${message.fileId} to 0`);
                 console.log(`Receiving metadata for file: ${message.name} (${message.size} bytes) from ${senderUUID.substring(0,6)}`);
                 if (fileTransferStatusElement) {
                     fileTransferStatusElement.textContent = `Receiving ${message.name}... 0%`;
@@ -794,18 +792,23 @@ function processFileChunk(chunkMessage) {
         }
         const chunk = byteArray.buffer;
 
+        const isNewChunkForSizeCalculation = receiveBuffer[fileId][chunkIndex] === undefined;
+
         receiveBuffer[fileId][chunkIndex] = chunk;
 
-        if ((receivedSize[fileId] + chunk.byteLength) > incomingFileInfo[fileId].size && !isLast) {
-             console.error(`[File Receive Error] Receiving chunk ${chunkIndex} for file ${fileId} would exceed expected size (${incomingFileInfo[fileId].size}). Aborting.`);
-             if (fileTransferStatusElement) fileTransferStatusElement.textContent = `Error receiving ${incomingFileInfo[fileId].name} (size mismatch)`;
-             delete incomingFileInfo[fileId];
-             delete receiveBuffer[fileId];
-             delete receivedSize[fileId];
-             return;
+        if (isNewChunkForSizeCalculation) {
+            if ((receivedSize[fileId] + chunk.byteLength) > incomingFileInfo[fileId].size && !isLast) {
+                 console.error(`[File Receive Error] Receiving new chunk ${chunkIndex} for file ${fileId} (size ${chunk.byteLength}) would exceed expected total size (${incomingFileInfo[fileId].size}). Current received: ${receivedSize[fileId]}. Aborting.`);
+                 if (fileTransferStatusElement) fileTransferStatusElement.textContent = `Error receiving ${incomingFileInfo[fileId].name} (size mismatch)`;
+                 delete incomingFileInfo[fileId];
+                 delete receiveBuffer[fileId];
+                 delete receivedSize[fileId];
+                 return;
+            }
+            receivedSize[fileId] += chunk.byteLength;
+        } else {
+            console.warn(`[File Chunk] Chunk ${chunkIndex} for file ${fileId} was already present or re-processed. Size not re-added to avoid duplication. Current total received: ${receivedSize[fileId]}`);
         }
-        const sizeBeforeAdd = receivedSize[fileId];
-        receivedSize[fileId] += chunk.byteLength;
 
         console.log(`[File Chunk] ID: ${fileId}, Index: ${chunkIndex}, Size: ${chunk.byteLength}, Total Received: ${receivedSize[fileId]}, Expected Size: ${incomingFileInfo[fileId].size}, Is Last: ${isLast}`);
 
@@ -815,6 +818,15 @@ function processFileChunk(chunkMessage) {
         }
 
         if (isLast) {
+            if (receivedSize[fileId] !== incomingFileInfo[fileId].size) {
+                console.error(`[File Assembly Error] Final size mismatch for file ${fileId}. Expected ${incomingFileInfo[fileId].size}, but received ${receivedSize[fileId]}.`);
+                if (fileTransferStatusElement) fileTransferStatusElement.textContent = `Error assembling ${incomingFileInfo[fileId].name} (final size error)`;
+                delete incomingFileInfo[fileId];
+                delete receiveBuffer[fileId];
+                delete receivedSize[fileId];
+                return;
+            }
+
             console.log("Received last chunk for file:", incomingFileInfo[fileId].name);
             const receivedChunkCount = receiveBuffer[fileId].filter(c => c !== undefined).length;
             const expectedChunks = chunkIndex + 1;
@@ -955,6 +967,7 @@ function handleSendFile() {
     }
 
     const file = fileInputElement.files[0];
+    const snapshottedFileSize = file.size;
     const fileId = generateUUID();
     console.log(`Preparing to send file: ${file.name}, size: ${file.size}, ID: ${fileId}`);
 
@@ -965,7 +978,7 @@ function handleSendFile() {
         type: 'file-metadata',
         fileId: fileId,
         name: file.name,
-        size: file.size,
+        size: snapshottedFileSize,
         fileType: file.type
     };
     const metadataString = JSON.stringify(metadata);
@@ -1000,7 +1013,7 @@ function handleSendFile() {
             if (bufferedAmount > CHUNK_SIZE * 8) {
                 console.warn(`DataChannel buffer high (${bufferedAmount}), pausing send...`);
                 setTimeout(() => {
-                    sendFileChunk(chunk, file, fileId, chunkIndex, offset);
+                    sendFileChunk(chunk, file.name, snapshottedFileSize, fileId, chunkIndex, offset);
                 }, 200);
                 return;
             }
@@ -1009,14 +1022,13 @@ function handleSendFile() {
             sendFileButton.disabled = false;
             return;
         }
-
-        sendFileChunk(chunk, file, fileId, chunkIndex, offset);
-
+        sendFileChunk(chunk, file.name, snapshottedFileSize, fileId, chunkIndex, offset);
     });
 
     const readSlice = o => {
         try {
-            const slice = file.slice(o, o + CHUNK_SIZE);
+            const end = Math.min(o + CHUNK_SIZE, snapshottedFileSize);
+            const slice = file.slice(o, end);
             fileReader.readAsArrayBuffer(slice);
         } catch (readError) {
              console.error('Error reading file slice:', readError);
@@ -1026,14 +1038,14 @@ function handleSendFile() {
         }
     };
 
-    const sendFileChunk = (chunkData, originalFile, currentFileId, currentChunkIndex, currentOffset, retryCount = 0) => {
+    const sendFileChunk = (chunkData, originalFileName, originalFileSizeInLogic, currentFileId, currentChunkIndex, currentOffset, retryCount = 0) => {
          try {
              const base64String = btoa(String.fromCharCode(...new Uint8Array(chunkData)));
              const chunkMessage = {
                  type: 'file-chunk',
                  fileId: currentFileId,
                  index: currentChunkIndex,
-                 last: ((currentOffset + chunkData.byteLength) >= originalFile.size),
+                 last: ((currentOffset + chunkData.byteLength) >= originalFileSizeInLogic),
                  data: base64String
              };
              const chunkString = JSON.stringify(chunkMessage);
@@ -1044,15 +1056,16 @@ function handleSendFile() {
 
              const newOffset = currentOffset + chunkData.byteLength;
 
-             const progress = Math.round((newOffset / originalFile.size) * 100);
-             if (fileTransferStatusElement) fileTransferStatusElement.textContent = `Sending ${originalFile.name}... ${progress}%`;
+             const progress = Math.round((newOffset / originalFileSizeInLogic) * 100);
+             if (fileTransferStatusElement) fileTransferStatusElement.textContent = `Sending ${originalFileName}... ${progress}%`;
 
-             if (newOffset < originalFile.size) {
+             if (newOffset < originalFileSizeInLogic) {
+                offset = newOffset; // Update outer scope offset for the next 'load' event
                  chunkIndex++;
                  setTimeout(() => readSlice(newOffset), 0);
              } else {
-                 console.log(`File ${originalFile.name} sent successfully.`);
-                 if (fileTransferStatusElement) fileTransferStatusElement.textContent = `Sent ${originalFile.name}`;
+                 console.log(`File ${originalFileName} sent successfully.`);
+                 if (fileTransferStatusElement) fileTransferStatusElement.textContent = `Sent ${originalFileName}`;
                  if(fileInputElement) fileInputElement.value = '';
                  sendFileButton.disabled = false;
              }
@@ -1060,7 +1073,7 @@ function handleSendFile() {
              console.error(`Error sending chunk ${currentChunkIndex}:`, error);
              if (retryCount < 3) {
                  console.log(`Retrying chunk ${currentChunkIndex} (attempt ${retryCount + 1})...`);
-                 setTimeout(() => sendFileChunk(chunkData, originalFile, currentFileId, currentChunkIndex, currentOffset, retryCount + 1), 1000);
+                 setTimeout(() => sendFileChunk(chunkData, originalFileName, originalFileSizeInLogic, currentFileId, currentChunkIndex, currentOffset, retryCount + 1), 1000);
              } else {
                  alert(`Failed to send chunk ${currentChunkIndex} after multiple retries.`);
                  if (fileTransferStatusElement) fileTransferStatusElement.textContent = 'Chunk send error';
@@ -1068,7 +1081,6 @@ function handleSendFile() {
              }
          }
     }
-
     readSlice(0);
 }
 
@@ -1085,7 +1097,7 @@ async function toggleVideoCall() {
             if (localVideoElement) localVideoElement.srcObject = localStream;
 
             const renegotiationPromises = Object.entries(peers).map(async ([peerUUID, peer]) => {
-                console.log(`[toggleVideoCall START] Processing peer: ${peerUUID}, State: ${peer?.connectionState}`); // Add log
+                console.log(`[toggleVideoCall START] Processing peer: ${peerUUID}, State: ${peer?.connectionState}`);
                 if (peer) {
                     localStream.getTracks().forEach(track => {
                         try {
@@ -1095,7 +1107,7 @@ async function toggleVideoCall() {
                             } else { console.warn(`peer.addTrack is not supported for ${peerUUID}.`); }
                         } catch (e) { console.error(`Error adding track to ${peerUUID}:`, e); }
                     });
-                    console.log(`[toggleVideoCall START] Attempting renegotiation for ${peerUUID}`); // Add log
+                    console.log(`[toggleVideoCall START] Attempting renegotiation for ${peerUUID}`);
                     await createAndSendOfferForRenegotiation(peerUUID, peer);
                 }
             });
@@ -1120,10 +1132,10 @@ async function toggleVideoCall() {
         localStream = null;
 
         const renegotiationPromises = Object.entries(peers).map(async ([peerUUID, peer]) => {
-            console.log(`[toggleVideoCall END] Processing peer: ${peerUUID}, State: ${peer?.connectionState}`); // Add log
+            console.log(`[toggleVideoCall END] Processing peer: ${peerUUID}, State: ${peer?.connectionState}`);
             if (peer) {
                 peer.getSenders().forEach(sender => {
-                    if (sender && sender.track && tracksToRemove.includes(sender.track)) { 
+                    if (sender && sender.track && tracksToRemove.includes(sender.track)) {
                         try {
                             if (peer.removeTrack) {
                                 peer.removeTrack(sender);
@@ -1132,7 +1144,7 @@ async function toggleVideoCall() {
                         } catch (e) { console.error(`Error removing track from ${peerUUID}:`, e); }
                     }
                 });
-                console.log(`[toggleVideoCall END] Attempting renegotiation for ${peerUUID}`); // Add log
+                console.log(`[toggleVideoCall END] Attempting renegotiation for ${peerUUID}`);
                 await createAndSendOfferForRenegotiation(peerUUID, peer);
             }
         });
@@ -1151,11 +1163,11 @@ async function createAndSendOfferForRenegotiation(peerUUID, peer) {
     }
     console.log(`Starting renegotiation with ${peerUUID}...`);
     try {
-        console.log(`[Renegotiation] Creating offer for ${peerUUID}...`); // Add log
+        console.log(`[Renegotiation] Creating offer for ${peerUUID}...`);
         const offer = await peer.createOffer();
-        console.log(`[Renegotiation] Offer created for ${peerUUID}. Setting local description...`); // Add log
+        console.log(`[Renegotiation] Offer created for ${peerUUID}. Setting local description...`);
         await peer.setLocalDescription(offer);
-        console.log(`[Renegotiation] Local description set for ${peerUUID}.`); // Add log
+        console.log(`[Renegotiation] Local description set for ${peerUUID}.`);
         console.log(`Renegotiation offer created for ${peerUUID}, sending...`);
         sendSignalingMessage({
             type: 'offer',
@@ -1178,7 +1190,7 @@ function toggleLocalVideo() {
 }
 
 function handleRemoteTrack(peerUUID, track, stream) {
-    console.log(`[handleRemoteTrack] Called for peer ${peerUUID}, track kind: ${track.kind}, stream ID: ${stream?.id}`); // Add log
+    console.log(`[handleRemoteTrack] Called for peer ${peerUUID}, track kind: ${track.kind}, stream ID: ${stream?.id}`);
     if (!remoteVideosContainer) {
         console.warn("Remote videos container not found.");
         return;
@@ -1191,8 +1203,6 @@ function handleRemoteTrack(peerUUID, track, stream) {
         videoElement.id = `remoteVideo-${peerUUID}`;
         videoElement.autoplay = true;
         videoElement.playsInline = true;
-        videoElement.style.width = '30%';
-        videoElement.style.margin = '5px';
         remoteVideosContainer.appendChild(videoElement);
     }
 
@@ -1475,6 +1485,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   roomInputElement = document.getElementById('roomInput');
   joinRoomButton = document.getElementById('joinRoomButton');
   startScanButton = document.getElementById('startScanButton');
+
+  if (!remoteVideosContainer) {
+    remoteVideosContainer = document.querySelector('.video-scroll-container');
+  }
 
   if (typeof idb === 'undefined') {
       updateStatus("Database features disabled (idb library not loaded).", "orange");

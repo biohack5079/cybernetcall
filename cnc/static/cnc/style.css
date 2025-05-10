@@ -1,211 +1,36 @@
-/* /home/my/d/cybernetcall/cnc/static/cnc/style.css */
-
+/* General Styles */
 body {
-  font-family: Arial, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   margin: 0;
-  padding: 1rem;
-  text-align: center;
+  padding: 20px;
   background-color: #f7f7f7;
-  color: #333; /* Added default text color */
+  color: #333;
+  line-height: 1.6;
 }
 
 h1 {
-  margin-top: 1rem;
-  margin-bottom: 1rem; /* Added bottom margin */
-  font-size: 2rem;
-  color: #007bff; /* Added color */
+  color: #007bff;
+  text-align: center;
+  margin-bottom: 2rem;
 }
 
-p {
-  margin-bottom: 1rem; /* Added spacing */
-}
-
-canvas#qrcode {
-  margin: 1rem auto;
-  display: block;
-  max-width: 90%; /* Ensure QR code fits smaller screens */
-  height: auto; /* Maintain aspect ratio */
-  border: 1px solid #ccc; /* Optional border */
-}
-
-#qr-reader {
-  border: 1px dashed #ccc; /* Visual cue for scanner area */
-  background-color: #eee; /* Slight background */
-}
-
-#qr-reader-results {
-  min-height: 1.2em; /* Reserve space for messages */
+h2 {
+  margin-top: 0;
+  color: #333;
+  border-bottom: 2px solid #007bff;
+  padding-bottom: 0.5rem;
+  margin-bottom: 1rem;
 }
 
 .section {
-  margin: 1.5rem auto; /* Increased spacing between sections */
-  max-width: 500px; /* Slightly wider max-width */
-  background: white;
-  padding: 1.5rem; /* Increased padding */
+  background-color: #fff;
+  padding: 1.5rem;
+  margin-bottom: 1.5rem;
   border-radius: 8px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-  text-align: left; /* Align content left within sections */
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
 }
 
-.section h2 {
-  margin-top: 0; /* Remove default top margin */
-  margin-bottom: 1rem;
-  text-align: center; /* Center section titles */
-  color: #333;
-  border-bottom: 1px solid #eee; /* Separator line */
-  padding-bottom: 0.5rem;
-}
-
-input[type="text"], input[type="file"] { /* Apply to file input too */
-  width: calc(100% - 1.2rem); /* Adjust width considering padding */
-  padding: 0.6rem;
-  margin-bottom: 0.5rem; /* Spacing below input */
-  border: 1px solid #ccc;
-  border-radius: 4px;
-  font-size: 1rem;
-}
-/* Adjust file input width if needed */
-input[type="file"] {
-    width: auto; /* Allow file input to size naturally */
-    display: inline-block; /* Align with button */
-    margin-right: 0.5rem;
-}
-
-
-button {
-  padding: 0.6rem 1.2rem;
-  margin-left: 0.5rem;
-  background-color: #007bff;
-  color: white;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 1rem;
-  transition: background-color 0.2s ease;
-  vertical-align: middle; /* Align buttons vertically */
-}
-
-button:hover {
-  background-color: #0056b3;
-}
-
-button:disabled {
-  background-color: #cccccc;
-  cursor: not-allowed;
-}
-
-/* Chat Area Styles */
-.message-area, .post-area {
-  height: 150px; /* Fixed height for chat areas */
-  overflow-y: auto; /* Enable vertical scrolling */
-  border: 1px solid #eee;
-  margin-top: 1rem;
-  padding: 0.5rem;
-  background-color: #f9f9f9;
-  border-radius: 4px;
-}
-
-.message, .post {
-  display: flex; /* Use flexbox for alignment */
-  justify-content: space-between; /* Push button to the right */
-  align-items: center; /* Vertically align items */
-  padding: 0.5rem; /* Increased padding */
-  margin-bottom: 0.5rem; /* Spacing between messages */
-  border-radius: 6px;
-  font-size: 0.9rem;
-  word-wrap: break-word; /* Wrap long words */
-  border-bottom: none; /* Remove previous border */
-  line-height: 1.4; /* Improve readability */
-}
-
-.message > span, .post > span { /* Target the content span */
-   flex-grow: 1; /* Allow content to take available space */
-   margin-right: 10px; /* Space before delete button */
-}
-
-
-.message strong, .post strong {
-  margin-right: 0.5em; /* Space after sender name */
-}
-
-/* Basic chat bubble styling */
-.own-message {
-  background-color: #dcf8c6; /* Light green for own messages */
-  margin-left: auto; /* Align right */
-  max-width: 80%; /* Limit width */
-  /* text-align: right; Removed for flexbox */
-}
-
-.peer-message {
-  background-color: #ffffff; /* White for peer messages */
-  border: 1px solid #eee;
-  margin-right: auto; /* Align left */
-  max-width: 80%; /* Limit width */
-  /* text-align: left; Removed for flexbox */
-}
-
-/* Delete Post Button Style */
-.delete-post-button {
-  padding: 0.2rem 0.4rem; /* Smaller padding */
-  margin-left: 10px; /* Ensure space */
-  background: none; /* No background */
-  border: none;
-  color: #dc3545; /* Red color */
-  cursor: pointer;
-  font-size: 1rem; /* Adjust size */
-  line-height: 1; /* Ensure proper alignment */
-  opacity: 0.6; /* Slightly transparent */
-  transition: opacity 0.2s ease;
-  flex-shrink: 0; /* Prevent button from shrinking */
-}
-
-.delete-post-button:hover {
-  opacity: 1; /* Fully visible on hover */
-  background: none; /* Ensure no background on hover */
-}
-
-
-/* Video Meeting Styles */
-.video-container {
-  display: flex;
-  justify-content: space-around; /* Space out videos */
-  align-items: center;
-  background-color: #eee;
-  padding: 0.5rem;
-  border-radius: 4px;
-  margin-bottom: 1rem;
-  position: relative; /* For potential absolute positioning of controls */
-  min-height: 150px; /* Ensure container has some height */
-}
-
-.video-container video {
-  width: 48%; /* Adjust width for two videos */
-  max-width: 200px; /* Limit max size */
-  height: auto;
-  background-color: #333; /* Placeholder background */
-  border: 1px solid #ccc;
-}
-
-#localVideo {
-  /* Specific styles for local video if needed */
-}
-
-#remoteVideo {
-  /* Specific styles for remote video if needed */
-}
-
-.call-controls {
-  margin-top: 1rem;
-  text-align: center;
-}
-
-.call-controls button {
-  font-size: 1.5rem; /* Make call buttons larger */
-  padding: 0.5rem;
-  margin: 0 0.5rem;
-}
-
-/* Accessibility helper class */
+/* Visually Hidden Class for Accessibility */
 .visually-hidden {
   position: absolute;
   width: 1px;
@@ -217,3 +42,213 @@ button:disabled {
   white-space: nowrap;
   border: 0;
 }
+
+
+/* QR Code Styles */
+#qrcode {
+  display: block;
+  margin: 1rem auto;
+  border: 1px solid #ccc;
+}
+
+#qr-reader {
+  border: 2px dashed #007bff;
+  border-radius: 4px;
+}
+
+/* Form Elements */
+input[type="text"],
+input[type="file"] {
+  width: calc(100% - 22px); /* padding and border consideration */
+  padding: 0.75rem;
+  margin-bottom: 0.75rem;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  box-sizing: border-box;
+  font-size: 1rem;
+}
+
+input[type="file"] {
+    width: auto; /* Let the browser decide for file input */
+}
+
+
+button {
+  background-color: #007bff;
+  color: white;
+  padding: 0.75rem 1.5rem;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 1rem;
+  transition: background-color 0.2s ease-in-out;
+}
+
+button:hover {
+  background-color: #0056b3;
+}
+
+button:disabled {
+  background-color: #ccc;
+  cursor: not-allowed;
+}
+
+/* Message Area Styles */
+.message-area, .post-area {
+  height: 200px;
+  overflow-y: auto;
+  border: 1px solid #eee;
+  padding: 0.75rem;
+  margin-top: 0.75rem;
+  background-color: #f9f9f9;
+  border-radius: 4px;
+}
+
+.message, .post {
+  padding: 0.5rem 0.75rem;
+  margin-bottom: 0.5rem;
+  border-radius: 4px;
+  word-wrap: break-word;
+}
+
+.message.own-message, .post.own-post { /* Assuming own-post class for user's posts */
+  background-color: #dcf8c6;
+  text-align: right;
+  margin-left: auto;
+  max-width: 70%;
+}
+
+.message.peer-message, .post.peer-post { /* Assuming peer-post class for others' posts */
+  background-color: #fff;
+  border: 1px solid #eee;
+  text-align: left;
+  margin-right: auto;
+  max-width: 70%;
+}
+
+.post-meta {
+  font-size: 0.8em;
+  color: #777;
+  margin-bottom: 0.25rem;
+}
+
+.delete-post-button {
+  background: none;
+  border: none;
+  color: #dc3545;
+  cursor: pointer;
+  font-size: 0.8em;
+  padding: 0.2rem 0.4rem;
+  margin-left: 0.5rem;
+}
+.delete-post-button:hover {
+  text-decoration: underline;
+  background-color: transparent; /* Override general button hover */
+}
+
+
+/* Video Meeting Styles */
+.video-container {
+  display: flex;
+  flex-direction: column; /* Mobile default: main container is column */
+  align-items: center;
+  background-color: #eee;
+  padding: 0.5rem;
+  border-radius: 4px;
+  margin-bottom: 1rem;
+  position: relative;
+  min-height: 180px; /* Minimum height for at least one video */
+}
+
+.video-scroll-container {
+  display: flex;
+  /* Mobile default: Vertical scroll */
+  flex-direction: column;
+  overflow-y: auto;
+  scroll-snap-type: y mandatory;
+  width: 100%;
+  max-height: 320px; /* Example: height for about two videos */
+  -webkit-overflow-scrolling: touch; /* iOS smooth scrolling */
+  align-items: center; /* Center videos horizontally */
+}
+
+.video-scroll-container video {
+  /* Mobile default: Vertically stacked videos */
+  width: 90%; /* Relative to container */
+  height: 150px; /* Fixed height */
+  max-width: 400px; /* Max width */
+  margin: 0.5rem 0; /* Vertical margin */
+  scroll-snap-align: center; /* Snap to center for vertical scroll */
+  background-color: #333;
+  border: 1px solid #ccc;
+  object-fit: cover; /* Maintain aspect ratio and fill */
+}
+
+.video-scroll-controls {
+  display: flex;
+  justify-content: center;
+  margin-top: 0.5rem;
+}
+
+.video-scroll-controls button {
+  padding: 0.5rem 1rem;
+  margin: 0 0.25rem;
+  font-size: 1rem;
+}
+
+.call-controls {
+  display: flex;
+  justify-content: center;
+  gap: 1rem; /* Space between buttons */
+  margin-top: 1rem;
+}
+
+.call-controls button {
+  font-size: 1.5rem; /* Bigger icons */
+  padding: 0.5rem;
+  line-height: 1; /* Adjust for better icon centering */
+}
+
+#file-transfer-status {
+  display: inline-block; /* To allow margin */
+}
+
+/* PC Styles (screen width 600px and above) */
+@media screen and (min-width: 600px) {
+  .video-container {
+    flex-direction: row; /* PC: main container is row */
+    align-items: flex-start; /* Align items to the top */
+  }
+
+  .video-scroll-container {
+    /* PC: Horizontal scroll */
+    flex-direction: row;
+    overflow-x: auto;
+    overflow-y: hidden; /* No vertical scroll */
+    scroll-snap-type: x mandatory;
+    justify-content: flex-start; /* Align videos from the left */
+    width: 100%;
+    max-height: 200px; /* Height of video area on PC */
+    height: auto; /* Adjust to content */
+  }
+
+  .video-scroll-container video {
+    /* PC: Horizontally arranged videos */
+    width: auto; /* Width based on content */
+    height: 180px; /* Height of videos on PC */
+    min-width: 240px; /* Min width for videos on PC */
+    max-width: 320px; /* Max width for videos on PC */
+    margin: 0 0.5rem; /* Horizontal margin */
+    scroll-snap-align: start; /* Snap to start for horizontal scroll */
+  }
+
+  /* Hide scroll buttons on mobile if desired, or style them differently */
+  /* For now, they are always visible. Add display: none; for mobile if needed */
+}
+
+/* Specific ID styles - keep if still relevant, or integrate into class styles */
+#localVideo {
+  /* border: 2px solid blue; */ /* Example: if you want to highlight local video */
+}
+
+
