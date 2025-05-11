@@ -130,11 +130,15 @@ async function addFriend(friendId, friendName = null) {
 async function isFriend(friendId) {
   if (!dbPromise || !friendId) return false;
   try {
+    console.log(`[isFriend] Checking if ${friendId} is a friend. My ID: ${myDeviceId}`);
     const db = await dbPromise;
     const friend = await db.get('friends', friendId);
-    return !!friend;
+    // return !!friend;
+    console.log(`[isFriend] Result for ${friendId}:`, friend ? {...friend} : null, `Is friend: ${!!friend}`);
+    return !!friend; 
   } catch (error) {
-    console.error("Error checking if friend exists:", error);
+    // console.error("Error checking if friend exists:", error);
+    console.error(`[isFriend] Error checking if ${friendId} exists:`, error);
     return false;
   }
 }
@@ -293,10 +297,12 @@ async function connectWebSocket() {
             if (joinedUUID && joinedUUID !== myDeviceId && messageType === 'user_joined') {
                 await displayFriendList();
 
+                console.log(`[user_joined] Received user_joined for ${joinedUUID}. My current ID: ${myDeviceId}. Checking if friend...`);
                 const friendExists = await isFriend(joinedUUID);
                 if (friendExists) {
                     console.log(`Friend ${joinedUUID} joined the room.`);
                     updateStatus(`Friend ${joinedUUID.substring(0,6)} joined. Attempting to connect...`, 'blue');
+                    console.log(`[user_joined] ${joinedUUID} IS a friend. Attempting auto-connect.`);
                     if (!peers[joinedUUID] || (peers[joinedUUID].connectionState !== 'connected' && peers[joinedUUID].connectionState !== 'connecting')) {
                         console.log(`Auto-connecting to newly joined friend: ${joinedUUID}`);
                         await createOfferForPeer(joinedUUID);
@@ -304,8 +310,8 @@ async function connectWebSocket() {
                         console.log(`Already connected or connecting to friend ${joinedUUID}, skipping auto-connect.`);
                     }
                 } else {
-                    console.log(`Peer ${joinedUUID} joined, but is not a friend. No auto-connection.`);
-                    updateStatus(`Peer ${joinedUUID.substring(0,6)} joined (not a friend).`, 'gray');
+                    console.log(`[user_joined] Peer ${joinedUUID} joined, but is NOT a friend. No auto-connection.`);
+                    updateStatus(`Peer ${joinedUUID.substring(0,6)} joined (NOT a friend).`, 'gray');
                 }
             }
             break;
@@ -564,12 +570,24 @@ async function handleOfferAndCreateAnswer(peerUUID, offerSdp) {
   const isRenegotiation = !!peer;
 
   if (!isRenegotiation) {
-       console.log(`No existing PeerConnection for ${peerUUID}. Creating one...`);
-       peer = await createPeerConnection(peerUUID);
-       if (!peer) {
-           console.error(`Failed to create PeerConnection for ${peerUUID} to handle offer.`);
-           return;
-       }
+    //    console.log(`No existing PeerConnection for ${peerUUID}. Creating one...`);
+    //    peer = await createPeerConnection(peerUUID);
+    //    if (!peer) {
+    //        console.error(`Failed to create PeerConnection for ${peerUUID} to handle offer.`);
+    //        return;
+    //    }
+    console.log(`No existing PeerConnection for ${peerUUID}. Creating one...`);
+    peer = await createPeerConnection(peerUUID);
+    if (!peer) {
+        console.error(`Failed to create PeerConnection for ${peerUUID} to handle offer.`);
+        return;
+    }
+
+    const alreadyFriend = await isFriend(peerUUID);
+    if (!alreadyFriend) {
+        console.log(`[handleOfferAndCreateAnswer] Peer ${peerUUID} (sender of offer) is not a friend. Adding them now.`);
+        await addFriend(peerUUID);
+    }
   }
   console.log(`Received offer from ${peerUUID}, setting remote description...`);
   try {
