@@ -127,6 +127,18 @@ async function addFriend(friendId, friendName = null) {
   }
 }
 
+async function isFriend(friendId) {
+  if (!dbPromise || !friendId) return false;
+  try {
+    const db = await dbPromise;
+    const friend = await db.get('friends', friendId);
+    return !!friend;
+  } catch (error) {
+    console.error("Error checking if friend exists:", error);
+    return false;
+  }
+}
+
 async function displayFriendList() {
   if (!dbPromise || !friendListElement) return;
   try {
@@ -279,14 +291,21 @@ async function connectWebSocket() {
         case 'user_online':
             const joinedUUID = message.uuid;
             if (joinedUUID && joinedUUID !== myDeviceId && messageType === 'user_joined') {
-                console.log(`Peer ${joinedUUID} joined the room.`);
-                updateStatus(`Peer ${joinedUUID.substring(0,6)} joined. Attempting to connect...`, 'blue');
                 await displayFriendList();
-                if (!peers[joinedUUID] || (peers[joinedUUID].connectionState !== 'connected' && peers[joinedUUID].connectionState !== 'connecting')) {
-                    console.log(`Auto-connecting to newly joined peer: ${joinedUUID}`);
-                    await createOfferForPeer(joinedUUID);
+
+                const friendExists = await isFriend(joinedUUID);
+                if (friendExists) {
+                    console.log(`Friend ${joinedUUID} joined the room.`);
+                    updateStatus(`Friend ${joinedUUID.substring(0,6)} joined. Attempting to connect...`, 'blue');
+                    if (!peers[joinedUUID] || (peers[joinedUUID].connectionState !== 'connected' && peers[joinedUUID].connectionState !== 'connecting')) {
+                        console.log(`Auto-connecting to newly joined friend: ${joinedUUID}`);
+                        await createOfferForPeer(joinedUUID);
+                    } else {
+                        console.log(`Already connected or connecting to friend ${joinedUUID}, skipping auto-connect.`);
+                    }
                 } else {
-                    console.log(`Already connected or connecting to ${joinedUUID}, skipping auto-connect.`);
+                    console.log(`Peer ${joinedUUID} joined, but is not a friend. No auto-connection.`);
+                    updateStatus(`Peer ${joinedUUID.substring(0,6)} joined (not a friend).`, 'gray');
                 }
             }
             break;
@@ -455,18 +474,32 @@ function setupDataChannelEvents(peerUUID, channel) {
     channel.onmessage = (event) => handleDataChannelMessage(event, peerUUID);
     channel.onopen = () => {
         console.log(`Data channel with ${peerUUID} opened!`);
-        if (Object.keys(dataChannels).filter(uuid => dataChannels[uuid]?.readyState === 'open').length === 1) {
+
+        const openPeers = Object.entries(dataChannels)
+                                .filter(([uuid, dc]) => dc && dc.readyState === 'open')
+                                .map(([uuid, dc]) => uuid.substring(0,6));
+
+        if (openPeers.length > 0) {
             setInteractionUiEnabled(true);
             currentAppState = AppState.CONNECTED;
-            updateStatus('Ready to chat/send files!', 'green');
+            updateStatus(`Ready to chat/send files with: ${openPeers.join(', ')}!`, 'green');
+        } else {
+            setInteractionUiEnabled(false);
         }
     };
     channel.onclose = () => {
         console.log(`Data channel with ${peerUUID} closed.`);
         delete dataChannels[peerUUID];
-        if (Object.keys(dataChannels).length === 0) {
-            updateStatus('Last data channel closed', 'orange');
+
+        const openPeers = Object.entries(dataChannels)
+                                .filter(([uuid, dc]) => dc && dc.readyState === 'open')
+                                .map(([uuid, dc]) => uuid.substring(0,6));
+
+        if (openPeers.length === 0) {
+            updateStatus(`Data channel with ${peerUUID.substring(0,6)} closed. No active data channels.`, 'orange');
             setInteractionUiEnabled(false);
+        } else {
+            updateStatus(`Data channel with ${peerUUID.substring(0,6)} closed. Still ready with: ${openPeers.join(', ')}!`, 'orange');
         }
     };
     channel.onerror = (error) => {
@@ -1060,7 +1093,7 @@ function handleSendFile() {
              if (fileTransferStatusElement) fileTransferStatusElement.textContent = `Sending ${originalFileName}... ${progress}%`;
 
              if (newOffset < originalFileSizeInLogic) {
-                offset = newOffset; // Update outer scope offset for the next 'load' event
+                offset = newOffset;
                  chunkIndex++;
                  setTimeout(() => readSlice(newOffset), 0);
              } else {
@@ -1288,8 +1321,7 @@ function startQrScanner() {
 
         const qrCodeSuccessCallback = (decodedText, decodedResult) => {
             console.log(`QR Scan success: ${decodedText ? decodedText.substring(0, 50) + '...' : ''}`);
-            if (qrResultsElement) qrResultsElement.textContent = `Scan successful. Processing...`;
-            setTimeout(() => { if(qrResultsElement) qrResultsElement.textContent = ''; }, 1500);
+            updateStatus('QR Scan successful. Processing...', 'blue');
 
             window.html5QrCodeScanner.stop().then(ignore => {
                 console.log("QR Scanner stopped after success.");
@@ -1343,14 +1375,14 @@ async function handleScannedQrData(decodedText) {
                 await createOfferForPeer(friendId);
             } else { console.warn("WebSocket not ready, cannot initiate connection automatically after scan."); }
         } else {
-            console.warn(`Scanned QR URL does not contain an 'id' parameter.`);
-            alert("Invalid QR code URL scanned (missing ID).");
+            const msg = "Invalid QR code: URL does not contain an 'id' parameter.";
+            console.warn(msg);
+            updateStatus(msg, 'red');
         }
     } catch (error) {
         console.error("Error handling scanned data:", error);
         if (error instanceof TypeError && error.message.includes("Invalid URL")) {
-             updateStatus('Invalid QR code: Not a valid URL.', 'red');
-             alert('Invalid QR code: Not a valid URL.');
+             updateStatus('Invalid QR code: Not a valid URL format.', 'red');
         } else {
              updateStatus(`QR data processing error: ${error.message}`, 'red');
              alert(`QR data processing error: ${error.message}`);
@@ -1556,4 +1588,3 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
 });
-
