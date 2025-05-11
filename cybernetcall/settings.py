@@ -105,13 +105,19 @@ CHANNEL_LAYERS = {
 # https://docs.djangoproject.com/en/5.0/ref/settings/#databases
 
 # ↓ 追加
-default_dburl = "sqlite:///" + str(BASE_DIR / "db.sqlite3")
+# default_dburl = "sqlite:///" + str(BASE_DIR / "db.sqlite3")
 
+# DATABASES = {
+#     'default': {
+#         'ENGINE': 'django.db.backends.sqlite3',
+#         'NAME': BASE_DIR / 'db.sqlite3',
+#     }
+# }
+
+# settings.py のデータベース設定部分
+default_dburl = "sqlite:///" + str(BASE_DIR / "db.sqlite3")
 DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
-    }
+    'default': env.db('DATABASE_URL', default=default_dburl)
 }
 
 
