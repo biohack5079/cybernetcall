@@ -24,6 +24,14 @@ let currentCallerId = null;
 let friendListElement;
 let pendingConnectionFriendId = null;
 
+// WebSocket auto-reconnect parameters
+let wsReconnectAttempts = 0;
+const MAX_WS_RECONNECT_ATTEMPTS = 5; // Max number of reconnect attempts
+const INITIAL_WS_RECONNECT_DELAY_MS = 2000; // Initial delay in ms
+const MAX_WS_RECONNECT_DELAY_MS = 30000;    // Max delay in ms
+let wsReconnectTimer = null;
+let isAttemptingReconnect = false; // Flag to indicate if a reconnect attempt is active
+
 const CHUNK_SIZE = 16384;
 let fileReader;
 let receiveBuffer = {};
@@ -259,12 +267,23 @@ async function connectWebSocket() {
   signalingSocket = new WebSocket(wsUrl);
 
   signalingSocket.onopen = () => {
-    console.log(`WebSocket connected`);
+    console.log(`WebSocket connected (Attempt: ${wsReconnectAttempts + 1})`);
+    wsReconnectAttempts = 0; // Reset on successful connection
+    isAttemptingReconnect = false;
+    if (wsReconnectTimer) {
+      clearTimeout(wsReconnectTimer);
+      wsReconnectTimer = null;
+    }
     updateStatus('Connected to signaling server. Registering...', 'blue');
     sendSignalingMessage({
       type: 'register',
       payload: { uuid: myDeviceId }
     });
+    // Note: Friend list display and pending connections are handled after 'registered' message.
+    // If re-establishing connections to existing friends is needed after a WS reconnect,
+    // that logic would go into the 'registered' message handler, or by re-triggering
+    // 'user_joined' like events if the server supports it.
+    // Current app logic auto-connects on 'user_joined' if they are friends.
   };
 
   signalingSocket.onmessage = async (event) => {
@@ -373,17 +392,87 @@ async function connectWebSocket() {
   };
 
   signalingSocket.onclose = async (event) => {
-    console.log('WebSocket disconnected:', event.reason, `Code: ${event.code}`);
+    const code = event.code;
+    const reason = event.reason;
+    console.log(`WebSocket disconnected: Code=${code}, Reason='${reason}', Current Attempts=${wsReconnectAttempts}`);
+
+    const socketInstanceThatClosed = event.target; // The WebSocket instance that fired this event
+
+    // Clear event handlers from the closed socket instance to prevent memory leaks or unintended calls
+    if (socketInstanceThatClosed) {
+        socketInstanceThatClosed.onopen = null;
+        socketInstanceThatClosed.onmessage = null;
+        socketInstanceThatClosed.onerror = null;
+        socketInstanceThatClosed.onclose = null;
+    }
+
+    // If the global signalingSocket is not this instance, it means a new connection might already be in progress or established.
+    // Or, if isAttemptingReconnect is true and signalingSocket is null, it means this onclose is part of an ongoing attempt.
+    if (signalingSocket !== socketInstanceThatClosed && signalingSocket !== null) {
+        console.warn("onclose event from an outdated socket instance. Global signalingSocket points to a newer instance. Ignoring.");
+        return;
+    }
+    
     signalingSocket = null;
-    updateStatus('Signaling connection lost. Please refresh.', 'red');
-    resetConnection();
-    await displayFriendList();
+    // Do not attempt to reconnect for normal closure codes
+    if (code === 1000 || code === 1001) {
+        console.log("WebSocket closed normally or going away. No reconnection attempt.");
+        updateStatus('Signaling connection closed.', 'orange');
+        resetConnection(); // Full reset of application state
+        await displayFriendList();
+        isAttemptingReconnect = false; // Ensure flag is reset
+        wsReconnectAttempts = 0; // Reset attempts for future manual connections
+        return;
+      }
+  
+      if (wsReconnectAttempts >= MAX_WS_RECONNECT_ATTEMPTS) {
+        console.error('WebSocket reconnection failed after maximum attempts.');
+        updateStatus('Signaling connection lost. Please refresh the page.', 'red');
+        resetConnection(); // Full reset
+        await displayFriendList();
+        isAttemptingReconnect = false;
+        wsReconnectAttempts = 0; // Reset for next time
+        return;
+      }
+  
+      isAttemptingReconnect = true;
+      wsReconnectAttempts++;
+  
+      let delay = INITIAL_WS_RECONNECT_DELAY_MS * Math.pow(1.5, wsReconnectAttempts - 1);
+      delay = Math.min(delay, MAX_WS_RECONNECT_DELAY_MS);
+  
+      updateStatus(`Signaling disconnected. Reconnecting in ${Math.round(delay/1000)}s (Attempt ${wsReconnectAttempts}/${MAX_WS_RECONNECT_ATTEMPTS})...`, 'orange');
+      console.log(`Scheduling WebSocket reconnect #${wsReconnectAttempts} in ${delay / 1000}s`);
+  
+      // Clean up peer connections and UI state during reconnection attempts
+      Object.keys(peers).forEach(peerUUID => closePeerConnection(peerUUID));
+      Object.values(dataChannels).forEach(channel => { if (channel && channel.readyState !== 'closed') channel.close(); });
+      dataChannels = {};
+      setInteractionUiEnabled(false);
+      currentAppState = AppState.CONNECTING; // Indicate attempt to connect to signaling
+  
+      if (wsReconnectTimer) clearTimeout(wsReconnectTimer);
+      wsReconnectTimer = setTimeout(async () => {
+        console.log(`Executing reconnect attempt #${wsReconnectAttempts}...`);
+        await connectWebSocket(); // Attempt to establish a new WebSocket connection
+      }, delay);
   };
 
   signalingSocket.onerror = (error) => {
     console.error('WebSocket error:', error);
-    updateStatus('Signaling connection error.', 'red');
-    resetConnection();
+    // updateStatus('Signaling connection error.', 'red'); // onclose will handle status updates
+    // Errors usually trigger onclose. If the socket is still open/opening, close it to ensure onclose fires.
+    if (signalingSocket && (signalingSocket.readyState === WebSocket.OPEN || signalingSocket.readyState === WebSocket.CONNECTING)) {
+        console.log("WebSocket error occurred on an open/connecting socket, explicitly closing to trigger onclose for reconnection logic.");
+        signalingSocket.close();
+    } else if (!signalingSocket && !isAttemptingReconnect) {
+        // This case might happen if the WebSocket constructor fails or an error occurs before onclose.
+        // Trigger a manual simulation of onclose behavior if necessary.
+        console.log("WebSocket error on a null socket without active reconnection. Manually invoking onclose-like behavior if needed.");
+        // To be robust, one might call a function here that encapsulates the onclose reconnect logic,
+        // e.g., handleWebSocketClosure({ code: -1, reason: "Generic error before close" });
+        // For now, rely on onclose being triggered by most error scenarios.
+    }
   };
 }
 
@@ -662,7 +751,7 @@ function resetConnection() {
         if (typeof Html5QrcodeScannerState !== 'undefined' && window.html5QrCodeScanner && window.html5QrCodeScanner.getState() === Html5QrcodeScannerState.SCANNING) {
             window.html5QrCodeScanner.stop().catch(e => console.warn("Error stopping scanner during reset:", e));
         } else if (window.html5QrCodeScanner) {
-             window.html5QrCodeScanner.clear().catch(e => console.warn("Error clearing scanner during reset:", e));
+            window.html5QrCodeScanner.clear().catch(e => console.warn("Error clearing scanner during reset:", e));
         }
     } catch(e) { console.warn("Error accessing scanner state during reset:", e); }
 
@@ -671,7 +760,9 @@ function resetConnection() {
         signalingSocket.onerror = null;
         signalingSocket.onmessage = null;
         signalingSocket.onopen = null;
-        signalingSocket.close();
+        if (signalingSocket.readyState === WebSocket.OPEN || signalingSocket.readyState === WebSocket.CONNECTING) {
+            signalingSocket.close(1000); // Normal closure
+        }
         signalingSocket = null;
     }
 
@@ -681,7 +772,9 @@ function resetConnection() {
             channel.onopen = null;
             channel.onclose = null;
             channel.onerror = null;
-            channel.close();
+            if (channel.readyState !== 'closed') {
+                channel.close();
+            }
         }
     });
     dataChannels = {};
@@ -724,6 +817,10 @@ function resetConnection() {
     if(startScanButton) startScanButton.disabled = false;
     updateStatus('Ready. Add friends or wait for connection.', 'black');
     setInteractionUiEnabled(false);
+    // Clear any pending reconnect timer if resetConnection is called explicitly
+    if (wsReconnectTimer) clearTimeout(wsReconnectTimer);
+    wsReconnectTimer = null;
+    isAttemptingReconnect = false;    
     if(messageAreaElement) messageAreaElement.innerHTML = '';
     if(postAreaElement) postAreaElement.innerHTML = '';
 }
@@ -1594,7 +1691,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   console.log("App initialization complete.");
   await connectWebSocket();
-  currentAppState = AppState.INITIAL;
 
   const urlParams = new URLSearchParams(window.location.search);
   const incomingFriendId = urlParams.get('id');
