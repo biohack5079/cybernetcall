@@ -322,11 +322,23 @@ async function connectWebSocket() {
                     console.log(`Friend ${joinedUUID} joined the room.`);
                     updateStatus(`Friend ${joinedUUID.substring(0,6)} joined. Attempting to connect...`, 'blue');
                     console.log(`[user_joined] ${joinedUUID} IS a friend. Attempting auto-connect.`);
-                    if (!peers[joinedUUID] || (peers[joinedUUID].connectionState !== 'connected' && peers[joinedUUID].connectionState !== 'connecting')) {
+                    if (peers[joinedUUID]) {
+                        // PeerConnectionが既に存在する
+                        const currentState = peers[joinedUUID].connectionState;
+                        if (currentState === 'connected' || currentState === 'connecting') {
+                            console.log(`Already connected or connecting to friend ${joinedUUID} (state: ${currentState}), skipping auto-connect.`);
+                        } else {
+                            // connectedでもconnectingでもない場合 (例: disconnected, failed, closed)
+                            // 相手が再接続してきた可能性があるので、既存の接続をクリーンアップして再試行
+                            console.log(`Friend ${joinedUUID} re-joined or connection was in state ${currentState}. Closing old connection and re-attempting.`);
+                            closePeerConnection(joinedUUID); // 古い接続を閉じる
+                            console.log(`Auto-connecting to re-joined friend: ${joinedUUID}`);
+                            await createOfferForPeer(joinedUUID); // 新しい接続を開始
+                        }
+                    } else {
+                        // PeerConnectionが存在しない場合、新規接続
                         console.log(`Auto-connecting to newly joined friend: ${joinedUUID}`);
                         await createOfferForPeer(joinedUUID);
-                    } else {
-                        console.log(`Already connected or connecting to friend ${joinedUUID}, skipping auto-connect.`);
                     }
                 } else {
                     console.log(`[user_joined] Peer ${joinedUUID} joined, but is NOT a friend. No auto-connection.`);
