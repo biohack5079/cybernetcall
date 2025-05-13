@@ -24,6 +24,14 @@ let currentCallerId = null;
 let friendListElement;
 let pendingConnectionFriendId = null;
 
+// WebSocket auto-reconnect parameters
+let wsReconnectAttempts = 0;
+const MAX_WS_RECONNECT_ATTEMPTS = 5; // Max number of reconnect attempts
+const INITIAL_WS_RECONNECT_DELAY_MS = 2000; // Initial delay in ms
+const MAX_WS_RECONNECT_DELAY_MS = 30000;    // Max delay in ms
+let wsReconnectTimer = null;
+let isAttemptingReconnect = false; // Flag to indicate if a reconnect attempt is active
+
 const CHUNK_SIZE = 16384;
 let fileReader;
 let receiveBuffer = {};
@@ -130,11 +138,15 @@ async function addFriend(friendId, friendName = null) {
 async function isFriend(friendId) {
   if (!dbPromise || !friendId) return false;
   try {
+    console.log(`[isFriend] Checking if ${friendId} is a friend. My ID: ${myDeviceId}`);
     const db = await dbPromise;
     const friend = await db.get('friends', friendId);
-    return !!friend;
+    // return !!friend;
+    console.log(`[isFriend] Result for ${friendId}:`, friend ? {...friend} : null, `Is friend: ${!!friend}`);
+    return !!friend; 
   } catch (error) {
-    console.error("Error checking if friend exists:", error);
+    // console.error("Error checking if friend exists:", error);
+    console.error(`[isFriend] Error checking if ${friendId} exists:`, error);
     return false;
   }
 }
@@ -255,12 +267,23 @@ async function connectWebSocket() {
   signalingSocket = new WebSocket(wsUrl);
 
   signalingSocket.onopen = () => {
-    console.log(`WebSocket connected`);
+    console.log(`WebSocket connected (Attempt: ${wsReconnectAttempts + 1})`);
+    wsReconnectAttempts = 0; // Reset on successful connection
+    isAttemptingReconnect = false;
+    if (wsReconnectTimer) {
+      clearTimeout(wsReconnectTimer);
+      wsReconnectTimer = null;
+    }
     updateStatus('Connected to signaling server. Registering...', 'blue');
     sendSignalingMessage({
       type: 'register',
       payload: { uuid: myDeviceId }
     });
+    // Note: Friend list display and pending connections are handled after 'registered' message.
+    // If re-establishing connections to existing friends is needed after a WS reconnect,
+    // that logic would go into the 'registered' message handler, or by re-triggering
+    // 'user_joined' like events if the server supports it.
+    // Current app logic auto-connects on 'user_joined' if they are friends.
   };
 
   signalingSocket.onmessage = async (event) => {
@@ -293,10 +316,12 @@ async function connectWebSocket() {
             if (joinedUUID && joinedUUID !== myDeviceId && messageType === 'user_joined') {
                 await displayFriendList();
 
+                console.log(`[user_joined] Received user_joined for ${joinedUUID}. My current ID: ${myDeviceId}. Checking if friend...`);
                 const friendExists = await isFriend(joinedUUID);
                 if (friendExists) {
                     console.log(`Friend ${joinedUUID} joined the room.`);
                     updateStatus(`Friend ${joinedUUID.substring(0,6)} joined. Attempting to connect...`, 'blue');
+                    console.log(`[user_joined] ${joinedUUID} IS a friend. Attempting auto-connect.`);
                     if (!peers[joinedUUID] || (peers[joinedUUID].connectionState !== 'connected' && peers[joinedUUID].connectionState !== 'connecting')) {
                         console.log(`Auto-connecting to newly joined friend: ${joinedUUID}`);
                         await createOfferForPeer(joinedUUID);
@@ -304,8 +329,8 @@ async function connectWebSocket() {
                         console.log(`Already connected or connecting to friend ${joinedUUID}, skipping auto-connect.`);
                     }
                 } else {
-                    console.log(`Peer ${joinedUUID} joined, but is not a friend. No auto-connection.`);
-                    updateStatus(`Peer ${joinedUUID.substring(0,6)} joined (not a friend).`, 'gray');
+                    console.log(`[user_joined] Peer ${joinedUUID} joined, but is NOT a friend. No auto-connection.`);
+                    updateStatus(`Peer ${joinedUUID.substring(0,6)} joined (NOT a friend).`, 'gray');
                 }
             }
             break;
@@ -367,17 +392,87 @@ async function connectWebSocket() {
   };
 
   signalingSocket.onclose = async (event) => {
-    console.log('WebSocket disconnected:', event.reason, `Code: ${event.code}`);
+    const code = event.code;
+    const reason = event.reason;
+    console.log(`WebSocket disconnected: Code=${code}, Reason='${reason}', Current Attempts=${wsReconnectAttempts}`);
+
+    const socketInstanceThatClosed = event.target; // The WebSocket instance that fired this event
+
+    // Clear event handlers from the closed socket instance to prevent memory leaks or unintended calls
+    if (socketInstanceThatClosed) {
+        socketInstanceThatClosed.onopen = null;
+        socketInstanceThatClosed.onmessage = null;
+        socketInstanceThatClosed.onerror = null;
+        socketInstanceThatClosed.onclose = null;
+    }
+
+    // If the global signalingSocket is not this instance, it means a new connection might already be in progress or established.
+    // Or, if isAttemptingReconnect is true and signalingSocket is null, it means this onclose is part of an ongoing attempt.
+    if (signalingSocket !== socketInstanceThatClosed && signalingSocket !== null) {
+        console.warn("onclose event from an outdated socket instance. Global signalingSocket points to a newer instance. Ignoring.");
+        return;
+    }
+    
     signalingSocket = null;
-    updateStatus('Signaling connection lost. Please refresh.', 'red');
-    resetConnection();
-    await displayFriendList();
+    // Do not attempt to reconnect for normal closure codes
+    if (code === 1000 || code === 1001) {
+        console.log("WebSocket closed normally or going away. No reconnection attempt.");
+        updateStatus('Signaling connection closed.', 'orange');
+        resetConnection(); // Full reset of application state
+        await displayFriendList();
+        isAttemptingReconnect = false; // Ensure flag is reset
+        wsReconnectAttempts = 0; // Reset attempts for future manual connections
+        return;
+      }
+  
+      if (wsReconnectAttempts >= MAX_WS_RECONNECT_ATTEMPTS) {
+        console.error('WebSocket reconnection failed after maximum attempts.');
+        updateStatus('Signaling connection lost. Please refresh the page.', 'red');
+        resetConnection(); // Full reset
+        await displayFriendList();
+        isAttemptingReconnect = false;
+        wsReconnectAttempts = 0; // Reset for next time
+        return;
+      }
+  
+      isAttemptingReconnect = true;
+      wsReconnectAttempts++;
+  
+      let delay = INITIAL_WS_RECONNECT_DELAY_MS * Math.pow(1.5, wsReconnectAttempts - 1);
+      delay = Math.min(delay, MAX_WS_RECONNECT_DELAY_MS);
+  
+      updateStatus(`Signaling disconnected. Reconnecting in ${Math.round(delay/1000)}s (Attempt ${wsReconnectAttempts}/${MAX_WS_RECONNECT_ATTEMPTS})...`, 'orange');
+      console.log(`Scheduling WebSocket reconnect #${wsReconnectAttempts} in ${delay / 1000}s`);
+  
+      // Clean up peer connections and UI state during reconnection attempts
+      Object.keys(peers).forEach(peerUUID => closePeerConnection(peerUUID));
+      Object.values(dataChannels).forEach(channel => { if (channel && channel.readyState !== 'closed') channel.close(); });
+      dataChannels = {};
+      setInteractionUiEnabled(false);
+      currentAppState = AppState.CONNECTING; // Indicate attempt to connect to signaling
+  
+      if (wsReconnectTimer) clearTimeout(wsReconnectTimer);
+      wsReconnectTimer = setTimeout(async () => {
+        console.log(`Executing reconnect attempt #${wsReconnectAttempts}...`);
+        await connectWebSocket(); // Attempt to establish a new WebSocket connection
+      }, delay);
   };
 
   signalingSocket.onerror = (error) => {
     console.error('WebSocket error:', error);
-    updateStatus('Signaling connection error.', 'red');
-    resetConnection();
+    // updateStatus('Signaling connection error.', 'red'); // onclose will handle status updates
+    // Errors usually trigger onclose. If the socket is still open/opening, close it to ensure onclose fires.
+    if (signalingSocket && (signalingSocket.readyState === WebSocket.OPEN || signalingSocket.readyState === WebSocket.CONNECTING)) {
+        console.log("WebSocket error occurred on an open/connecting socket, explicitly closing to trigger onclose for reconnection logic.");
+        signalingSocket.close();
+    } else if (!signalingSocket && !isAttemptingReconnect) {
+        // This case might happen if the WebSocket constructor fails or an error occurs before onclose.
+        // Trigger a manual simulation of onclose behavior if necessary.
+        console.log("WebSocket error on a null socket without active reconnection. Manually invoking onclose-like behavior if needed.");
+        // To be robust, one might call a function here that encapsulates the onclose reconnect logic,
+        // e.g., handleWebSocketClosure({ code: -1, reason: "Generic error before close" });
+        // For now, rely on onclose being triggered by most error scenarios.
+    }
   };
 }
 
@@ -564,12 +659,24 @@ async function handleOfferAndCreateAnswer(peerUUID, offerSdp) {
   const isRenegotiation = !!peer;
 
   if (!isRenegotiation) {
-       console.log(`No existing PeerConnection for ${peerUUID}. Creating one...`);
-       peer = await createPeerConnection(peerUUID);
-       if (!peer) {
-           console.error(`Failed to create PeerConnection for ${peerUUID} to handle offer.`);
-           return;
-       }
+    //    console.log(`No existing PeerConnection for ${peerUUID}. Creating one...`);
+    //    peer = await createPeerConnection(peerUUID);
+    //    if (!peer) {
+    //        console.error(`Failed to create PeerConnection for ${peerUUID} to handle offer.`);
+    //        return;
+    //    }
+    console.log(`No existing PeerConnection for ${peerUUID}. Creating one...`);
+    peer = await createPeerConnection(peerUUID);
+    if (!peer) {
+        console.error(`Failed to create PeerConnection for ${peerUUID} to handle offer.`);
+        return;
+    }
+
+    const alreadyFriend = await isFriend(peerUUID);
+    if (!alreadyFriend) {
+        console.log(`[handleOfferAndCreateAnswer] Peer ${peerUUID} (sender of offer) is not a friend. Adding them now.`);
+        await addFriend(peerUUID);
+    }
   }
   console.log(`Received offer from ${peerUUID}, setting remote description...`);
   try {
@@ -644,7 +751,7 @@ function resetConnection() {
         if (typeof Html5QrcodeScannerState !== 'undefined' && window.html5QrCodeScanner && window.html5QrCodeScanner.getState() === Html5QrcodeScannerState.SCANNING) {
             window.html5QrCodeScanner.stop().catch(e => console.warn("Error stopping scanner during reset:", e));
         } else if (window.html5QrCodeScanner) {
-             window.html5QrCodeScanner.clear().catch(e => console.warn("Error clearing scanner during reset:", e));
+            window.html5QrCodeScanner.clear().catch(e => console.warn("Error clearing scanner during reset:", e));
         }
     } catch(e) { console.warn("Error accessing scanner state during reset:", e); }
 
@@ -653,7 +760,9 @@ function resetConnection() {
         signalingSocket.onerror = null;
         signalingSocket.onmessage = null;
         signalingSocket.onopen = null;
-        signalingSocket.close();
+        if (signalingSocket.readyState === WebSocket.OPEN || signalingSocket.readyState === WebSocket.CONNECTING) {
+            signalingSocket.close(1000); // Normal closure
+        }
         signalingSocket = null;
     }
 
@@ -663,7 +772,9 @@ function resetConnection() {
             channel.onopen = null;
             channel.onclose = null;
             channel.onerror = null;
-            channel.close();
+            if (channel.readyState !== 'closed') {
+                channel.close();
+            }
         }
     });
     dataChannels = {};
@@ -706,6 +817,10 @@ function resetConnection() {
     if(startScanButton) startScanButton.disabled = false;
     updateStatus('Ready. Add friends or wait for connection.', 'black');
     setInteractionUiEnabled(false);
+    // Clear any pending reconnect timer if resetConnection is called explicitly
+    if (wsReconnectTimer) clearTimeout(wsReconnectTimer);
+    wsReconnectTimer = null;
+    isAttemptingReconnect = false;    
     if(messageAreaElement) messageAreaElement.innerHTML = '';
     if(postAreaElement) postAreaElement.innerHTML = '';
 }
@@ -1486,8 +1601,34 @@ function setupEventListeners() {
         if (e.key === 'Enter' && !sendPostButton.disabled) handleSendPost();
     });
 
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') {
+          console.log('App became visible. Checking WebSocket connection.');
+          // isAttemptingReconnect フラグも考慮して、既存の再接続処理と競合しないようにする
+          if ((!signalingSocket || signalingSocket.readyState !== WebSocket.OPEN) && !isAttemptingReconnect) {
+            console.log('WebSocket not connected or in a bad state upon visibility change. Attempting to reconnect.');
+            updateStatus('Re-checking connection...', 'blue');
+            // 既存の再接続ロジックを尊重しつつ、再接続を促す
+            // 既にタイマーが動いている場合はそれをクリアし、試行回数をリセットして最初から試みる
+            if (wsReconnectTimer) {
+              clearTimeout(wsReconnectTimer);
+              wsReconnectTimer = null;
+            }
+            wsReconnectAttempts = 0; // 新規の再接続シーケンスとして扱う
+            // isAttemptingReconnect は connectWebSocket 内で true に設定される
+            connectWebSocket();
+          } else if (signalingSocket && signalingSocket.readyState === WebSocket.OPEN) {
+            console.log('WebSocket is connected upon visibility change.');
+          } else if (isAttemptingReconnect) {
+            console.log('WebSocket reconnection attempt already in progress upon visibility change.');
+          }
+        } else {
+          console.log('App became hidden.');
+        }
+      });
+
     console.log("Event listeners set up.");
-}
+    }
 
 document.addEventListener('DOMContentLoaded', async () => {
   console.log("DOM fully loaded and parsed. Initializing app...");
@@ -1553,12 +1694,31 @@ document.addEventListener('DOMContentLoaded', async () => {
         registration.onupdatefound = () => {
           const installingWorker = registration.installing;
           if (installingWorker) {
+                let refreshing; // リロード処理の重複実行を防ぐフラグ        
             installingWorker.onstatechange = () => {
               if (installingWorker.state === 'installed') {
                 if (navigator.serviceWorker.controller) {
-                  console.log('New content is available; please refresh.');
+                     // 新しいコンテンツが利用可能で、現在のページは古いSWによって制御されている
+                     console.log('New content is available and has been installed. Please refresh to update.');
+                     // ユーザーに更新を促すシンプルなconfirmダイアログ
+                     if (confirm('A new version of the app is available. Refresh now to get the latest features?')) {
+                       // 新しいService Workerが待機状態(waiting)の場合、skipWaitingを指示して即座にアクティベートさせる
+                       // (ただし、installイベントで既にself.skipWaiting()を呼んでいるので、通常は不要かもしれない)
+                       if (registration.waiting) {
+                           registration.waiting.postMessage({ type: 'SKIP_WAITING' });
+                       }
+                       // controllerchangeイベントを監視し、新しいSWが制御を開始したらリロード
+                       navigator.serviceWorker.addEventListener('controllerchange', () => {
+                           if (refreshing) return;
+                           window.location.reload();
+                           refreshing = true;
+                       });
+                     } else {
+                       updateStatus('New version available. Please refresh soon to update.', 'blue');
+                     }
                 } else {
-                  console.log('Content is cached for offline use.');
+                     // 初めてService Workerが登録され、コンテンツがキャッシュされた場合
+                    console.log('Content is cached for offline use.');
                 }
               }
             };
@@ -1576,7 +1736,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   console.log("App initialization complete.");
   await connectWebSocket();
-  currentAppState = AppState.INITIAL;
 
   const urlParams = new URLSearchParams(window.location.search);
   const incomingFriendId = urlParams.get('id');

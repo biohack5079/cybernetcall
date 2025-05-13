@@ -75,28 +75,50 @@ self.addEventListener('fetch', event => {
     return;
   }
 
-  // Network falling back to cache strategy
-  event.respondWith(
-    // 1. Try to fetch the resource from the network
-    fetch(event.request)
-      .then(networkResponse => {
-        // console.log('[Service Worker] Fetched from network:', event.request.url);
-        return networkResponse;
-      })
-      .catch(() => {
-        // 2. If network fetch fails (e.g., offline), try to get it from the cache
-        console.log('[Service Worker] Network failed, trying cache for:', event.request.url);
-        return caches.match(event.request)
-          .then(cachedResponse => {
-            if (cachedResponse) {
-              console.log('[Service Worker] Serving from cache:', event.request.url);
+  const requestUrl = new URL(event.request.url);
+
+  // Apply Stale-While-Revalidate strategy for app.js
+  if (requestUrl.pathname === '/static/cnc/app.js') {
+    // console.log('[Service Worker] Applying Stale-While-Revalidate for:', event.request.url);
+    event.respondWith(
+      caches.open(CACHE_NAME).then(cache => {
+        return cache.match(event.request).then(cachedResponse => {
+          const fetchPromise = fetch(event.request).then(networkResponse => {
+            if (networkResponse && networkResponse.ok) {
+              // console.log('[Service Worker] SWR: Caching new version of', event.request.url);
+              cache.put(event.request, networkResponse.clone());
+            } else if (networkResponse) {
+              // console.warn('[Service Worker] SWR: Network request failed or not ok for', event.request.url, networkResponse.status);
             } else {
-              console.log('[Service Worker] Not found in cache:', event.request.url);
-              // Optional: Return a custom offline fallback page/response here if needed
+              // console.warn('[Service Worker] SWR: Network request completely failed for', event.request.url);
             }
-            return cachedResponse; // Returns the cached response or undefined if not found
+            return networkResponse;
+          }).catch(error => {
+            // console.error('[Service Worker] SWR: Fetch error for', event.request.url, error);
+            // If network fails, and there's a cached response, it will be used.
+            // If no cached response, this will lead to an error for the client.
+            return undefined; 
           });
+          // Return cached response if available, otherwise wait for fetchPromise
+          return cachedResponse || fetchPromise;
+        });
       })
-  );
+    );
+  } else {
+    // For all other resources, use Network falling back to cache strategy
+    // console.log('[Service Worker] Applying Network falling back to cache for:', event.request.url);
+    event.respondWith(
+      fetch(event.request)
+        .catch(() => {
+          // console.log('[Service Worker] Network failed, trying cache for:', event.request.url);
+          return caches.match(event.request).then(cachedResponse => {
+            // if (!cachedResponse) {
+            //   console.log('[Service Worker] Not found in cache:', event.request.url);
+            // }
+            return cachedResponse;
+          });
+        })
+    );
+  }
 });
 
