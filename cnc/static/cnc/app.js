@@ -912,7 +912,7 @@ async function processTextMessage(dataString, senderUUID) {
                 };
                 receiveBuffer[message.fileId] = [];
                 receivedSize[message.fileId] = 0;
-                console.log(`[File Metadata] Initialized receivedSize for ${message.fileId} to 0`);
+
                 console.log(`Receiving metadata for file: ${message.name} (${message.size} bytes) from ${senderUUID.substring(0,6)}`);
                 if (fileTransferStatusElement) {
                     fileTransferStatusElement.textContent = `Receiving ${message.name}... 0%`;
@@ -959,15 +959,14 @@ function processFileChunk(chunkMessage) {
         if (isNewChunkForSizeCalculation) {
             if ((receivedSize[fileId] + chunk.byteLength) > incomingFileInfo[fileId].size && !isLast) {
                  console.error(`[File Receive Error] Receiving new chunk ${chunkIndex} for file ${fileId} (size ${chunk.byteLength}) would exceed expected total size (${incomingFileInfo[fileId].size}). Current received: ${receivedSize[fileId]}. Aborting.`);
-                 if (fileTransferStatusElement) fileTransferStatusElement.textContent = `Error receiving ${incomingFileInfo[fileId].name} (size mismatch)`;
+                 if (fileTransferStatusElement) fileTransferStatusElement.innerHTML = DOMPurify.sanitize(`Error receiving ${incomingFileInfo[fileId].name} (size mismatch)`);
                  delete incomingFileInfo[fileId];
                  delete receiveBuffer[fileId];
                  delete receivedSize[fileId];
                  return;
             }
             receivedSize[fileId] += chunk.byteLength;
-        } else {
-            console.warn(`[File Chunk] Chunk ${chunkIndex} for file ${fileId} was already present or re-processed. Size not re-added to avoid duplication. Current total received: ${receivedSize[fileId]}`);
+
         }
 
         console.log(`[File Chunk] ID: ${fileId}, Index: ${chunkIndex}, Size: ${chunk.byteLength}, Total Received: ${receivedSize[fileId]}, Expected Size: ${incomingFileInfo[fileId].size}, Is Last: ${isLast}`);
@@ -980,7 +979,7 @@ function processFileChunk(chunkMessage) {
         if (isLast) {
             if (receivedSize[fileId] !== incomingFileInfo[fileId].size) {
                 console.error(`[File Assembly Error] Final size mismatch for file ${fileId}. Expected ${incomingFileInfo[fileId].size}, but received ${receivedSize[fileId]}.`);
-                if (fileTransferStatusElement) fileTransferStatusElement.textContent = `Error assembling ${incomingFileInfo[fileId].name} (final size error)`;
+                if (fileTransferStatusElement) fileTransferStatusElement.innerHTML = DOMPurify.sanitize(`Error assembling ${incomingFileInfo[fileId].name} (final size error)`);
                 delete incomingFileInfo[fileId];
                 delete receiveBuffer[fileId];
                 delete receivedSize[fileId];
@@ -993,7 +992,7 @@ function processFileChunk(chunkMessage) {
 
             if (receivedChunkCount < expectedChunks) {
                  console.warn(`Missing chunks for file ${fileId}. Expected ${expectedChunks}, got ${receivedChunkCount}. Cannot assemble.`);
-                 if (fileTransferStatusElement) fileTransferStatusElement.textContent = `Error receiving ${incomingFileInfo[fileId].name} (missing chunks)`;
+                 if (fileTransferStatusElement) fileTransferStatusElement.innerHTML = DOMPurify.sanitize(`Error receiving ${incomingFileInfo[fileId].name} (missing chunks)`);
                  delete incomingFileInfo[fileId];
                  delete receiveBuffer[fileId];
                  delete receivedSize[fileId];
@@ -1010,7 +1009,7 @@ function processFileChunk(chunkMessage) {
             downloadLink.style.marginTop = '5px';
 
             if (fileTransferStatusElement) {
-                fileTransferStatusElement.textContent = '';
+                fileTransferStatusElement.innerHTML = ''; 
                 fileTransferStatusElement.appendChild(downloadLink);
             } else {
                 messageAreaElement.appendChild(downloadLink);
@@ -1022,7 +1021,7 @@ function processFileChunk(chunkMessage) {
         }
     } catch (error) {
         console.error("Error processing file chunk:", error, chunkMessage);
-        if (fileTransferStatusElement) fileTransferStatusElement.textContent = `Error processing chunk for ${incomingFileInfo[fileId]?.name}`;
+        if (fileTransferStatusElement) fileTransferStatusElement.innerHTML = DOMPurify.sanitize(`Error processing chunk for ${incomingFileInfo[fileId]?.name || 'unknown file'}`);
         delete incomingFileInfo[fileId];
         delete receiveBuffer[fileId];
         delete receivedSize[fileId];
@@ -1131,7 +1130,7 @@ function handleSendFile() {
     const fileId = generateUUID();
     console.log(`Preparing to send file: ${file.name}, size: ${file.size}, ID: ${fileId}`);
 
-    if (fileTransferStatusElement) fileTransferStatusElement.textContent = `Sending ${file.name}... 0%`;
+    if (fileTransferStatusElement) fileTransferStatusElement.innerHTML = DOMPurify.sanitize(`Sending ${file.name}... 0%`);
     sendFileButton.disabled = true;
 
     const metadata = {
@@ -1156,12 +1155,12 @@ function handleSendFile() {
     fileReader.addEventListener('error', error => {
         console.error('FileReader error:', error);
         alert('File read error occurred.');
-        if (fileTransferStatusElement) fileTransferStatusElement.textContent = 'File read error';
+        if (fileTransferStatusElement) fileTransferStatusElement.innerHTML = DOMPurify.sanitize('File read error');
         sendFileButton.disabled = false;
     });
     fileReader.addEventListener('abort', event => {
         console.log('FileReader abort:', event);
-        if (fileTransferStatusElement) fileTransferStatusElement.textContent = 'File send aborted';
+        if (fileTransferStatusElement) fileTransferStatusElement.innerHTML = DOMPurify.sanitize('File send aborted');
         sendFileButton.disabled = false;
     });
     fileReader.addEventListener('load', e => {
@@ -1225,7 +1224,7 @@ function handleSendFile() {
                  setTimeout(() => readSlice(newOffset), 0);
              } else {
                  console.log(`File ${originalFileName} sent successfully.`);
-                 if (fileTransferStatusElement) fileTransferStatusElement.textContent = `Sent ${originalFileName}`;
+                 if (fileTransferStatusElement) fileTransferStatusElement.innerHTML = DOMPurify.sanitize(`Sent ${originalFileName}`);
                  if(fileInputElement) fileInputElement.value = '';
                  sendFileButton.disabled = false;
              }
@@ -1236,7 +1235,7 @@ function handleSendFile() {
                  setTimeout(() => sendFileChunk(chunkData, originalFileName, originalFileSizeInLogic, currentFileId, currentChunkIndex, currentOffset, retryCount + 1), 1000);
              } else {
                  alert(`Failed to send chunk ${currentChunkIndex} after multiple retries.`);
-                 if (fileTransferStatusElement) fileTransferStatusElement.textContent = 'Chunk send error';
+                 if (fileTransferStatusElement) fileTransferStatusElement.innerHTML = DOMPurify.sanitize('Chunk send error');
                  sendFileButton.disabled = false;
              }
          }
