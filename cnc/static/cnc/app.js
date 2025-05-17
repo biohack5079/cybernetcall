@@ -38,15 +38,12 @@ let receiveBuffer = {};
 let receivedSize = {};
 let incomingFileInfo = {};
 
-const DB_NAME = 'cybernetcall-db';
-const DB_VERSION = 3; // Increment version for schema change
-
-let dbPromise = typeof idb !== 'undefined' ? idb.openDB(DB_NAME, DB_VERSION, {
+let dbPromise = typeof idb !== 'undefined' ? idb.openDB('cybernetcall-db', 2, {
   upgrade(db, oldVersion) {
     if (!db.objectStoreNames.contains('posts')) {
       db.createObjectStore('posts', { keyPath: 'id' });
     }
-    if (oldVersion < 2 && !db.objectStoreNames.contains('friends')) { // Assuming friends was added in v2
+    if (oldVersion < 2 && !db.objectStoreNames.contains('friends')) {
       db.createObjectStore('friends', { keyPath: 'id' });
     }
   }
@@ -54,16 +51,6 @@ let dbPromise = typeof idb !== 'undefined' ? idb.openDB(DB_NAME, DB_VERSION, {
 
 if (!dbPromise) {
     console.error("idb library not loaded. IndexedDB features will be unavailable.");
-} else {
-    // Ensure deviceInfo store is created if it doesn't exist (e.g., on new version)
-    dbPromise.then(db => {
-      if (!db.objectStoreNames.contains('deviceInfo')) {
-        // This case should ideally be handled in upgrade, but as a fallback:
-        console.warn("deviceInfo store not found, attempting to create. This might indicate an issue with DB versioning.");
-        // Re-opening with a higher version or specific upgrade logic might be needed if this occurs.
-        // For now, we assume upgrade handles it.
-      }
-    });
 }
 
 function generateUUID() {
@@ -161,31 +148,6 @@ async function isFriend(friendId) {
     // console.error("Error checking if friend exists:", error);
     console.error(`[isFriend] Error checking if ${friendId} exists:`, error);
     return false;
-  }
-}
-
-async function getDeviceIdFromDb() {
-  if (!dbPromise) return null;
-  try {
-    const db = await dbPromise;
-    const deviceInfo = await db.get('deviceInfo', 'main');
-    return deviceInfo ? deviceInfo.deviceId : null;
-  } catch (error) {
-    console.error("Error getting deviceId from DB:", error);
-    return null;
-  }
-}
-
-async function saveDeviceIdToDb(deviceId) {
-  if (!dbPromise) return;
-  try {
-    const db = await dbPromise;
-    const tx = db.transaction('deviceInfo', 'readwrite');
-    await tx.store.put({ id: 'main', deviceId: deviceId });
-    await tx.done;
-    console.log("Device ID saved to DB:", deviceId);
-  } catch (error) {
-    console.error("Error saving deviceId to DB:", error);
   }
 }
 
@@ -1720,27 +1682,10 @@ document.addEventListener('DOMContentLoaded', async () => {
       updateStatus("Database initialization failed.", "red");
   }
 
-m  // Initialize Device ID
-  let idFromDb = await getDeviceIdFromDb();
-  console.log("[ID Init] ID from IndexedDB:", idFromDb);
-  if (idFromDb) {
-    myDeviceId = idFromDb;
-    console.log("My Device ID (from IndexedDB):", myDeviceId);
-  } else {
-    let idFromLocalStorage = localStorage.getItem('cybernetcall-deviceId');
-    console.log("[ID Init] ID from LocalStorage:", idFromLocalStorage);
-    if (idFromLocalStorage) {
-      myDeviceId = idFromLocalStorage;
-      console.log("My Device ID (from localStorage, migrating to IndexedDB):", myDeviceId);
-    } else {
-      myDeviceId = generateUUID();
-      console.log("My Device ID (newly generated):", myDeviceId);
-    }
-    await saveDeviceIdToDb(myDeviceId);
-    console.log("[ID Init] Saved new/migrated ID to IndexedDB:", myDeviceId);
-  }
-  localStorage.setItem('cybernetcall-deviceId', myDeviceId); // Keep localStorage for potential fallback or other uses
-  console.log("[ID Init] Final myDeviceId:", myDeviceId);
+  myDeviceId = localStorage.getItem('cybernetcall-deviceId') || generateUUID();
+  localStorage.setItem('cybernetcall-deviceId', myDeviceId);
+  console.log("My Device ID:", myDeviceId);
+
   await displayInitialPosts();
 
   setupEventListeners();
