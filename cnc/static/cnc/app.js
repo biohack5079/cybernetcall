@@ -1720,13 +1720,15 @@ document.addEventListener('DOMContentLoaded', async () => {
       updateStatus("Database initialization failed.", "red");
   }
 
-  // Initialize Device ID
+m  // Initialize Device ID
   let idFromDb = await getDeviceIdFromDb();
+  console.log("[ID Init] ID from IndexedDB:", idFromDb);
   if (idFromDb) {
     myDeviceId = idFromDb;
     console.log("My Device ID (from IndexedDB):", myDeviceId);
   } else {
     let idFromLocalStorage = localStorage.getItem('cybernetcall-deviceId');
+    console.log("[ID Init] ID from LocalStorage:", idFromLocalStorage);
     if (idFromLocalStorage) {
       myDeviceId = idFromLocalStorage;
       console.log("My Device ID (from localStorage, migrating to IndexedDB):", myDeviceId);
@@ -1735,8 +1737,10 @@ document.addEventListener('DOMContentLoaded', async () => {
       console.log("My Device ID (newly generated):", myDeviceId);
     }
     await saveDeviceIdToDb(myDeviceId);
+    console.log("[ID Init] Saved new/migrated ID to IndexedDB:", myDeviceId);
   }
   localStorage.setItem('cybernetcall-deviceId', myDeviceId); // Keep localStorage for potential fallback or other uses
+  console.log("[ID Init] Final myDeviceId:", myDeviceId);
   await displayInitialPosts();
 
   setupEventListeners();
