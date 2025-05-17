@@ -24,12 +24,13 @@ let currentCallerId = null;
 let friendListElement;
 let pendingConnectionFriendId = null;
 
+// WebSocket auto-reconnect parameters
 let wsReconnectAttempts = 0;
-const MAX_WS_RECONNECT_ATTEMPTS = 5;
-const INITIAL_WS_RECONNECT_DELAY_MS = 2000;
-const MAX_WS_RECONNECT_DELAY_MS = 30000;
+const MAX_WS_RECONNECT_ATTEMPTS = 5; // Max number of reconnect attempts
+const INITIAL_WS_RECONNECT_DELAY_MS = 2000; // Initial delay in ms
+const MAX_WS_RECONNECT_DELAY_MS = 30000;    // Max delay in ms
 let wsReconnectTimer = null;
-let isAttemptingReconnect = false;
+let isAttemptingReconnect = false; // Flag to indicate if a reconnect attempt is active
 
 const CHUNK_SIZE = 16384;
 let fileReader;
@@ -37,31 +38,19 @@ let receiveBuffer = {};
 let receivedSize = {};
 let incomingFileInfo = {};
 
-let peerReconnectInfo = {};
-const MAX_PEER_RECONNECT_ATTEMPTS = 3;
-const INITIAL_PEER_RECONNECT_DELAY_MS = 3000;
-
-const DB_NAME = 'cybernetcall-db';
-const DB_VERSION = 3;
-
-let dbPromise = typeof idb !== 'undefined' ? idb.openDB(DB_NAME, DB_VERSION, {
+let dbPromise = typeof idb !== 'undefined' ? idb.openDB('cybernetcall-db', 2, {
   upgrade(db, oldVersion) {
-    if (oldVersion < 1 && !db.objectStoreNames.contains('posts')) {
+    if (!db.objectStoreNames.contains('posts')) {
       db.createObjectStore('posts', { keyPath: 'id' });
     }
     if (oldVersion < 2 && !db.objectStoreNames.contains('friends')) {
       db.createObjectStore('friends', { keyPath: 'id' });
-    }
-    if (oldVersion < 3 && !db.objectStoreNames.contains('deviceInfo')) {
-      db.createObjectStore('deviceInfo', { keyPath: 'id' });
     }
   }
 }) : null;
 
 if (!dbPromise) {
     console.error("idb library not loaded. IndexedDB features will be unavailable.");
-} else {
-    dbPromise.then(db => console.log("Database opened successfully:", db.name, "version:", db.version)).catch(err => console.error("Failed to open DB:", err));
 }
 
 function generateUUID() {
@@ -120,32 +109,6 @@ async function deletePostFromDb(postId) {
   }
 }
 
-async function getDeviceIdFromDb() {
-  if (!dbPromise) return null;
-  try {
-    const db = await dbPromise;
-    const deviceInfo = await db.get('deviceInfo', 'main');
-    console.log("[DB] Got deviceId from DB:", deviceInfo ? deviceInfo.deviceId : null);
-    return deviceInfo ? deviceInfo.deviceId : null;
-  } catch (error) {
-    console.error("[DB] Error getting deviceId from DB:", error);
-    return null;
-  }
-}
-
-async function saveDeviceIdToDb(deviceId) {
-  if (!dbPromise) return;
-  try {
-    const db = await dbPromise;
-    const tx = db.transaction('deviceInfo', 'readwrite');
-    await tx.store.put({ id: 'main', deviceId: deviceId });
-    await tx.done;
-    console.log("[DB] Device ID saved to DB:", deviceId);
-  } catch (error) {
-    console.error("[DB] Error saving deviceId to DB:", error);
-  }
-}
-
 async function addFriend(friendId, friendName = null) {
   if (!dbPromise || !friendId) return;
   if (friendId === myDeviceId) {
@@ -178,9 +141,11 @@ async function isFriend(friendId) {
     console.log(`[isFriend] Checking if ${friendId} is a friend. My ID: ${myDeviceId}`);
     const db = await dbPromise;
     const friend = await db.get('friends', friendId);
+    // return !!friend;
     console.log(`[isFriend] Result for ${friendId}:`, friend ? {...friend} : null, `Is friend: ${!!friend}`);
-    return !!friend;
+    return !!friend; 
   } catch (error) {
+    // console.error("Error checking if friend exists:", error);
     console.error(`[isFriend] Error checking if ${friendId} exists:`, error);
     return false;
   }
@@ -303,7 +268,7 @@ async function connectWebSocket() {
 
   signalingSocket.onopen = () => {
     console.log(`WebSocket connected (Attempt: ${wsReconnectAttempts + 1})`);
-    wsReconnectAttempts = 0;
+    wsReconnectAttempts = 0; // Reset on successful connection
     isAttemptingReconnect = false;
     if (wsReconnectTimer) {
       clearTimeout(wsReconnectTimer);
@@ -314,6 +279,11 @@ async function connectWebSocket() {
       type: 'register',
       payload: { uuid: myDeviceId }
     });
+    // Note: Friend list display and pending connections are handled after 'registered' message.
+    // If re-establishing connections to existing friends is needed after a WS reconnect,
+    // that logic would go into the 'registered' message handler, or by re-triggering
+    // 'user_joined' like events if the server supports it.
+    // Current app logic auto-connects on 'user_joined' if they are friends.
   };
 
   signalingSocket.onmessage = async (event) => {
@@ -334,6 +304,7 @@ async function connectWebSocket() {
             if (pendingConnectionFriendId) {
                 console.log(`WebSocket registered, initiating pending connection to ${pendingConnectionFriendId}`);
                 await createOfferForPeer(pendingConnectionFriendId);
+                pendingConnectionFriendId = null;
             }
             break;
         case 'user_list':
@@ -352,16 +323,20 @@ async function connectWebSocket() {
                     updateStatus(`Friend ${joinedUUID.substring(0,6)} joined. Attempting to connect...`, 'blue');
                     console.log(`[user_joined] ${joinedUUID} IS a friend. Attempting auto-connect.`);
                     if (peers[joinedUUID]) {
+                        // PeerConnectionが既に存在する
                         const currentState = peers[joinedUUID].connectionState;
                         if (currentState === 'connected' || currentState === 'connecting') {
                             console.log(`Already connected or connecting to friend ${joinedUUID} (state: ${currentState}), skipping auto-connect.`);
                         } else {
+                            // connectedでもconnectingでもない場合 (例: disconnected, failed, closed)
+                            // 相手が再接続してきた可能性があるので、既存の接続をクリーンアップして再試行
                             console.log(`Friend ${joinedUUID} re-joined or connection was in state ${currentState}. Closing old connection and re-attempting.`);
-                            closePeerConnection(joinedUUID, true);
+                            closePeerConnection(joinedUUID); // 古い接続を閉じる
                             console.log(`Auto-connecting to re-joined friend: ${joinedUUID}`);
-                            await createOfferForPeer(joinedUUID, true);
+                            await createOfferForPeer(joinedUUID); // 新しい接続を開始
                         }
                     } else {
+                        // PeerConnectionが存在しない場合、新規接続
                         console.log(`Auto-connecting to newly joined friend: ${joinedUUID}`);
                         await createOfferForPeer(joinedUUID);
                     }
@@ -433,8 +408,9 @@ async function connectWebSocket() {
     const reason = event.reason;
     console.log(`WebSocket disconnected: Code=${code}, Reason='${reason}', Current Attempts=${wsReconnectAttempts}`);
 
-    const socketInstanceThatClosed = event.target;
+    const socketInstanceThatClosed = event.target; // The WebSocket instance that fired this event
 
+    // Clear event handlers from the closed socket instance to prevent memory leaks or unintended calls
     if (socketInstanceThatClosed) {
         socketInstanceThatClosed.onopen = null;
         socketInstanceThatClosed.onmessage = null;
@@ -442,61 +418,72 @@ async function connectWebSocket() {
         socketInstanceThatClosed.onclose = null;
     }
 
+    // If the global signalingSocket is not this instance, it means a new connection might already be in progress or established.
+    // Or, if isAttemptingReconnect is true and signalingSocket is null, it means this onclose is part of an ongoing attempt.
     if (signalingSocket !== socketInstanceThatClosed && signalingSocket !== null) {
         console.warn("onclose event from an outdated socket instance. Global signalingSocket points to a newer instance. Ignoring.");
         return;
     }
-
+    
     signalingSocket = null;
+    // Do not attempt to reconnect for normal closure codes
     if (code === 1000 || code === 1001) {
         console.log("WebSocket closed normally or going away. No reconnection attempt.");
         updateStatus('Signaling connection closed.', 'orange');
-        resetConnection();
+        resetConnection(); // Full reset of application state
         await displayFriendList();
-        isAttemptingReconnect = false;
-        wsReconnectAttempts = 0;
+        isAttemptingReconnect = false; // Ensure flag is reset
+        wsReconnectAttempts = 0; // Reset attempts for future manual connections
         return;
       }
-
+  
       if (wsReconnectAttempts >= MAX_WS_RECONNECT_ATTEMPTS) {
         console.error('WebSocket reconnection failed after maximum attempts.');
         updateStatus('Signaling connection lost. Please refresh the page.', 'red');
-        resetConnection();
+        resetConnection(); // Full reset
         await displayFriendList();
         isAttemptingReconnect = false;
-        wsReconnectAttempts = 0;
+        wsReconnectAttempts = 0; // Reset for next time
         return;
       }
-
+  
       isAttemptingReconnect = true;
       wsReconnectAttempts++;
-
+  
       let delay = INITIAL_WS_RECONNECT_DELAY_MS * Math.pow(1.5, wsReconnectAttempts - 1);
       delay = Math.min(delay, MAX_WS_RECONNECT_DELAY_MS);
-
+  
       updateStatus(`Signaling disconnected. Reconnecting in ${Math.round(delay/1000)}s (Attempt ${wsReconnectAttempts}/${MAX_WS_RECONNECT_ATTEMPTS})...`, 'orange');
       console.log(`Scheduling WebSocket reconnect #${wsReconnectAttempts} in ${delay / 1000}s`);
-
+  
+      // Clean up peer connections and UI state during reconnection attempts
       Object.keys(peers).forEach(peerUUID => closePeerConnection(peerUUID));
       Object.values(dataChannels).forEach(channel => { if (channel && channel.readyState !== 'closed') channel.close(); });
       dataChannels = {};
       setInteractionUiEnabled(false);
-      currentAppState = AppState.CONNECTING;
-
+      currentAppState = AppState.CONNECTING; // Indicate attempt to connect to signaling
+  
       if (wsReconnectTimer) clearTimeout(wsReconnectTimer);
       wsReconnectTimer = setTimeout(async () => {
         console.log(`Executing reconnect attempt #${wsReconnectAttempts}...`);
-        await connectWebSocket();
+        await connectWebSocket(); // Attempt to establish a new WebSocket connection
       }, delay);
   };
 
   signalingSocket.onerror = (error) => {
     console.error('WebSocket error:', error);
+    // updateStatus('Signaling connection error.', 'red'); // onclose will handle status updates
+    // Errors usually trigger onclose. If the socket is still open/opening, close it to ensure onclose fires.
     if (signalingSocket && (signalingSocket.readyState === WebSocket.OPEN || signalingSocket.readyState === WebSocket.CONNECTING)) {
         console.log("WebSocket error occurred on an open/connecting socket, explicitly closing to trigger onclose for reconnection logic.");
         signalingSocket.close();
     } else if (!signalingSocket && !isAttemptingReconnect) {
+        // This case might happen if the WebSocket constructor fails or an error occurs before onclose.
+        // Trigger a manual simulation of onclose behavior if necessary.
         console.log("WebSocket error on a null socket without active reconnection. Manually invoking onclose-like behavior if needed.");
+        // To be robust, one might call a function here that encapsulates the onclose reconnect logic,
+        // e.g., handleWebSocketClosure({ code: -1, reason: "Generic error before close" });
+        // For now, rely on onclose being triggered by most error scenarios.
     }
   };
 }
@@ -510,59 +497,6 @@ function sendSignalingMessage(message) {
     console.error('Cannot send signaling message: WebSocket is not open.');
     updateStatus('Signaling connection not ready.', 'red');
   }
-}
-
-async function attemptPeerReconnect(peerUUID) {
-  if (!peers[peerUUID] && !dataChannels[peerUUID] && !(peerReconnectInfo[peerUUID]?.attempts > 0) ) {
-    console.log(`[Peer Reconnect] Peer ${peerUUID} seems fully closed or no active attempt, not attempting reconnect.`);
-    clearPeerReconnectAttempt(peerUUID);
-    return;
-  }
-
-  if (!peerReconnectInfo[peerUUID]) {
-    peerReconnectInfo[peerUUID] = { attempts: 0, timerId: null };
-  }
-
-  if (peerReconnectInfo[peerUUID].timerId) {
-    console.log(`[Peer Reconnect] Reconnect attempt already scheduled for ${peerUUID}.`);
-    return;
-  }
-
-  const isPeerStillFriend = await isFriend(peerUUID);
-  if (!isPeerStillFriend) {
-    console.log(`[Peer Reconnect] ${peerUUID} is no longer a friend. Not attempting reconnect.`);
-    clearPeerReconnectAttempt(peerUUID);
-    return;
-  }
-
-  if (!signalingSocket || signalingSocket.readyState !== WebSocket.OPEN) {
-    console.log(`[Peer Reconnect] WebSocket not open. Reconnect for ${peerUUID} will be handled by WebSocket reconnection logic if applicable.`);
-    return;
-  }
-
-  peerReconnectInfo[peerUUID].attempts++;
-  if (peerReconnectInfo[peerUUID].attempts > MAX_PEER_RECONNECT_ATTEMPTS) {
-    console.error(`[Peer Reconnect] Max reconnect attempts reached for ${peerUUID}. Giving up.`);
-    updateStatus(`Failed to reconnect with ${peerUUID.substring(0,6)}. Please try manually.`, 'red');
-    clearPeerReconnectAttempt(peerUUID);
-    if (peers[peerUUID] && peers[peerUUID].connectionState !== 'closed') {
-        closePeerConnection(peerUUID);
-    }
-    return;
-  }
-
-  let delay = INITIAL_PEER_RECONNECT_DELAY_MS * Math.pow(1.5, peerReconnectInfo[peerUUID].attempts - 1);
-  delay = Math.min(delay, 15000);
-
-  updateStatus(`Connection lost with ${peerUUID.substring(0,6)}. Reconnecting in ${Math.round(delay/1000)}s (Attempt ${peerReconnectInfo[peerUUID].attempts}/${MAX_PEER_RECONNECT_ATTEMPTS})...`, 'orange');
-  console.log(`[Peer Reconnect] Scheduling reconnect for ${peerUUID} in ${delay/1000}s (Attempt ${peerReconnectInfo[peerUUID].attempts})`);
-
-  peerReconnectInfo[peerUUID].timerId = setTimeout(async () => {
-    peerReconnectInfo[peerUUID].timerId = null;
-    console.log(`[Peer Reconnect] Attempting to re-establish connection with ${peerUUID} (Attempt ${peerReconnectInfo[peerUUID].attempts})...`);
-    closePeerConnection(peerUUID, true);
-    await createOfferForPeer(peerUUID, true);
-  }, delay);
 }
 
 async function createPeerConnection(peerUUID) {
@@ -599,56 +533,32 @@ async function createPeerConnection(peerUUID) {
       handleRemoteTrack(peerUUID, event.track, event.streams[0]);
     };
 
-    peer.onconnectionstatechange = async () => {
+    peer.onconnectionstatechange = () => {
       console.log(`PeerConnection state with ${peerUUID}: ${peer.connectionState}`);
       switch (peer.connectionState) {
         case 'connected':
-          clearPeerReconnectAttempt(peerUUID);
-          const isPeerFriendConnected = await isFriend(peerUUID);
-          if (isPeerFriendConnected) {
-            updateStatus(`Connected with ${peerUUID.substring(0,6)}!`, 'green');
-            let hasOneConnectedFriend = false;
-            for (const id in peers) {
-                if (peers[id] && peers[id].connectionState === 'connected' && await isFriend(id)) {
-                    hasOneConnectedFriend = true;
-                    break;
-                }
-            }
-            if (hasOneConnectedFriend) {
-                setInteractionUiEnabled(true);
-                currentAppState = AppState.CONNECTED;
-            }
-          } else {
-            updateStatus(`Connected to ${peerUUID.substring(0,6)} (not a friend). Add to friends to interact.`, 'blue');
-            setInteractionUiEnabled(false);
+          updateStatus(`Connected with ${peerUUID.substring(0,6)}!`, 'green');
+          if (Object.keys(peers).filter(uuid => peers[uuid]?.connectionState === 'connected').length === 1) {
+              setInteractionUiEnabled(true);
+              currentAppState = AppState.CONNECTED;
           }
           break;
         case 'disconnected':
         case 'failed':
-          await attemptPeerReconnect(peerUUID);
-          let anyOtherConnectedFriend = false;
-            for (const id in peers) {
-                if (id !== peerUUID && peers[id] && peers[id].connectionState === 'connected' && await isFriend(id)) {
-                    anyOtherConnectedFriend = true;
-                    break;
-                }
-            }
-          if (!anyOtherConnectedFriend && Object.keys(peers).filter(id => peers[id]?.connectionState === 'connected').length === 0) {
+        case 'closed':
+          updateStatus(`Connection with ${peerUUID.substring(0,6)} closed (${peer.connectionState})`, 'orange');
+          closePeerConnection(peerUUID);
+          if (Object.keys(peers).length === 0) {
               setInteractionUiEnabled(false);
+              currentAppState = AppState.INITIAL;
+              updateStatus('All peers disconnected.', 'orange');
           }
           break;
         case 'connecting':
           updateStatus(`Connecting with ${peerUUID.substring(0,6)}...`, 'orange');
           break;
-        case 'closed':
-          clearPeerReconnectAttempt(peerUUID);
-          updateStatus(`Connection with ${peerUUID.substring(0,6)} closed.`, 'orange');
-          const connectedPeerCount = Object.values(peers).filter(p => p && p.connectionState === 'connected').length;
-          if (connectedPeerCount === 0 && Object.keys(peers).length > 0) {
-          }
-          break;
         default:
-             updateStatus(`Connection state with ${peerUUID.substring(0,6)}: ${peer.connectionState}`, 'gray');
+             updateStatus(`Connection state with ${peerUUID.substring(0,6)}: ${peer.connectionState}`, 'orange');
       }
     };
 
@@ -663,31 +573,24 @@ async function createPeerConnection(peerUUID) {
   }
 }
 
-async function setupDataChannelEvents(peerUUID, channel) {
+function setupDataChannelEvents(peerUUID, channel) {
     if (!channel) return;
 
     dataChannels[peerUUID] = channel;
 
     channel.onmessage = (event) => handleDataChannelMessage(event, peerUUID);
-    channel.onopen = async () => {
+    channel.onopen = () => {
         console.log(`Data channel with ${peerUUID} opened!`);
-        if (peers[peerUUID]?.connectionState === 'connected' && await isFriend(peerUUID)) {
+
+        const openPeers = Object.entries(dataChannels)
+                                .filter(([uuid, dc]) => dc && dc.readyState === 'open')
+                                .map(([uuid, dc]) => uuid.substring(0,6));
+
+        if (openPeers.length > 0) {
+            setInteractionUiEnabled(true);
             currentAppState = AppState.CONNECTED;
-            const connectedFriends = [];
-            for (const id in peers) {
-                if (peers[id]?.connectionState === 'connected' && dataChannels[id]?.readyState === 'open' && await isFriend(id)) {
-                    connectedFriends.push(id.substring(0,6));
-                }
-            }
-            if (connectedFriends.length > 0) {
-                updateStatus(`Ready to chat/send files with: ${connectedFriends.join(', ')}!`, 'green');
-                setInteractionUiEnabled(true);
-            } else {
-                updateStatus(`Data channel open with ${peerUUID.substring(0,6)}.`, 'green');
-                setInteractionUiEnabled(false);
-            }
+            updateStatus(`Ready to chat/send files with: ${openPeers.join(', ')}!`, 'green');
         } else {
-            updateStatus(`Data channel open with ${peerUUID.substring(0,6)} (not a friend or connection pending).`, 'blue');
             setInteractionUiEnabled(false);
         }
     };
@@ -713,12 +616,10 @@ async function setupDataChannelEvents(peerUUID, channel) {
     };
 }
 
-async function createOfferForPeer(peerUUID, isReconnectAttempt = false) {
-    if (!isReconnectAttempt) {
-        currentAppState = AppState.CONNECTING;
-    }
+async function createOfferForPeer(peerUUID) {
+    currentAppState = AppState.CONNECTING;
     const peer = await createPeerConnection(peerUUID);
-    if (!peer) { currentAppState = AppState.ERROR; return; }
+    if (!peer) return;
 
     const offerSdp = await createOfferAndSetLocal(peerUUID);
     if (offerSdp) {
@@ -727,7 +628,6 @@ async function createOfferForPeer(peerUUID, isReconnectAttempt = false) {
             type: 'offer',
             payload: { target: peerUUID, sdp: offerSdp }
         });
-        if (pendingConnectionFriendId === peerUUID) pendingConnectionFriendId = null;
     } else {
         console.error(`Failed to create offer for ${peerUUID}`);
         closePeerConnection(peerUUID);
@@ -771,6 +671,12 @@ async function handleOfferAndCreateAnswer(peerUUID, offerSdp) {
   const isRenegotiation = !!peer;
 
   if (!isRenegotiation) {
+    //    console.log(`No existing PeerConnection for ${peerUUID}. Creating one...`);
+    //    peer = await createPeerConnection(peerUUID);
+    //    if (!peer) {
+    //        console.error(`Failed to create PeerConnection for ${peerUUID} to handle offer.`);
+    //        return;
+    //    }
     console.log(`No existing PeerConnection for ${peerUUID}. Creating one...`);
     peer = await createPeerConnection(peerUUID);
     if (!peer) {
@@ -867,7 +773,7 @@ function resetConnection() {
         signalingSocket.onmessage = null;
         signalingSocket.onopen = null;
         if (signalingSocket.readyState === WebSocket.OPEN || signalingSocket.readyState === WebSocket.CONNECTING) {
-            signalingSocket.close(1000);
+            signalingSocket.close(1000); // Normal closure
         }
         signalingSocket = null;
     }
@@ -923,20 +829,18 @@ function resetConnection() {
     if(startScanButton) startScanButton.disabled = false;
     updateStatus('Ready. Add friends or wait for connection.', 'black');
     setInteractionUiEnabled(false);
-
-    Object.keys(peerReconnectInfo).forEach(id => clearPeerReconnectAttempt(id));
-    peerReconnectInfo = {};
-
+    // Clear any pending reconnect timer if resetConnection is called explicitly
     if (wsReconnectTimer) clearTimeout(wsReconnectTimer);
     wsReconnectTimer = null;
-    isAttemptingReconnect = false;
+    isAttemptingReconnect = false;    
     if(messageAreaElement) messageAreaElement.innerHTML = '';
+    if(postAreaElement) postAreaElement.innerHTML = '';
 }
 
-function closePeerConnection(peerUUID, silent = false) {
+function closePeerConnection(peerUUID) {
     const peer = peers[peerUUID];
     if (peer) {
-        if (!silent) console.log(`Closing PeerConnection with ${peerUUID}`);
+        console.log(`Closing PeerConnection with ${peerUUID}`);
         peer.onicecandidate = null;
         peer.ondatachannel = null;
         peer.ontrack = null;
@@ -952,23 +856,11 @@ function closePeerConnection(peerUUID, silent = false) {
     if (videoElement) {
         videoElement.remove();
     }
-    if (!silent && Object.keys(peers).length === 0) {
+    if (Object.keys(peers).length === 0) {
         setInteractionUiEnabled(false);
         currentAppState = AppState.INITIAL;
         updateStatus(`Last peer disconnected.`, 'orange');
     }
-    clearPeerReconnectAttempt(peerUUID);
-}
-
-function clearPeerReconnectAttempt(peerUUID) {
-  if (peerReconnectInfo[peerUUID]) {
-    if (peerReconnectInfo[peerUUID].timerId) {
-      clearTimeout(peerReconnectInfo[peerUUID].timerId);
-      peerReconnectInfo[peerUUID].timerId = null;
-    }
-    delete peerReconnectInfo[peerUUID];
-    console.log(`[Peer Reconnect] Cleared reconnect attempts for ${peerUUID}.`);
-  }
 }
 
 function handleDataChannelMessage(event, senderUUID) {
@@ -1353,8 +1245,8 @@ function handleSendFile() {
 }
 
 async function toggleVideoCall() {
-    if (currentAppState !== AppState.CONNECTED && currentAppState !== AppState.CONNECTING && !Object.values(peers).some(p => p && p.connectionState === 'connected')) {
-        console.warn("Call button clicked but not connected to any peer.");
+    if (currentAppState !== AppState.CONNECTED && currentAppState !== AppState.CONNECTING) {
+        console.warn("Call button clicked but not connected.");
         alert("Please connect to a peer first.");
         return;
     }
@@ -1362,10 +1254,6 @@ async function toggleVideoCall() {
         console.log("Starting video call...");
         try {
             localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-            const videoTrack = localStream.getVideoTracks()[0];
-            if (videoTrack) {
-                videoTrack.enabled = false;
-            }
             if (localVideoElement) localVideoElement.srcObject = localStream;
 
             const renegotiationPromises = Object.entries(peers).map(async ([peerUUID, peer]) => {
@@ -1385,7 +1273,12 @@ async function toggleVideoCall() {
             });
             await Promise.all(renegotiationPromises);
 
-            if(videoButton) videoButton.textContent = '🚫';
+            const videoTrack = localStream.getVideoTracks()[0];
+            if (videoTrack) {
+                videoTrack.enabled = false;
+                if(videoButton) videoButton.textContent = '🚫';
+                console.log(`Local video started disabled`);
+            }
             if(callButton) callButton.textContent = 'End Call';
         } catch (error) {
             console.error(`Error starting video call (getUserMedia): Name: ${error.name}, Message: ${error.message}`, error);
@@ -1453,8 +1346,6 @@ function toggleLocalVideo() {
             if(videoButton) videoButton.textContent = videoTrack.enabled ? '🎥' : '🚫';
             console.log(`Local video ${videoTrack.enabled ? 'enabled' : 'disabled'}`);
         }
-    } else {
-        console.warn("toggleLocalVideo called but no localStream available.");
     }
 }
 
@@ -1492,25 +1383,19 @@ function updateQrCodeWithValue(value) {
         console.warn("QR element not available for update.");
         return;
     }
-    if (!value || typeof value !== 'string' || !value.includes('?id=')) {
-        console.warn("Invalid or no value provided to update QR code. Value:", value);
-        if (qrElement) {
-            qrElement.innerHTML = DOMPurify.sanitize("Your ID is not ready yet or invalid. Please wait or refresh.");
-            qrElement.style.display = 'block';
-        }
-        return;
-    }
-    console.log("Updating QR Code with value:", value);
+    console.log("Updating QR Code to show own User ID for adding friends.");
     const size = Math.min(window.innerWidth * 0.7, 250);
-    if (typeof QRious !== 'undefined') {
+    if (typeof QRious !== 'undefined' && value) {
         try {
-            new QRious({ element: qrElement, value: value, size: size, level: 'L' });
+            new QRious({ element: qrElement, value: value || '', size: size, level: 'L' });
             qrElement.style.display = 'block';
             console.log("QR code updated and set to display: block");
         } catch (e) {
              console.error("QRious error:", e);
-             qrElement.innerHTML = DOMPurify.sanitize("QR Code Generation Error");
+             qrElement.textContent = "QR Code Generation Error";
         }
+    } else if (!value) {
+         console.warn("No value provided to update QR code.");
     } else {
         console.error("QRious not loaded.");
         setTimeout(() => updateQrCodeWithValue(value), 500);
@@ -1611,15 +1496,11 @@ async function handleScannedQrData(decodedText) {
         if (friendId) {
             console.log("Found friend ID in scanned URL:", friendId);
             await addFriend(friendId);
-            currentAppState = AppState.CONNECTING;
             if (signalingSocket && signalingSocket.readyState === WebSocket.OPEN) {
                 console.log(`Attempting to initiate connection to ${friendId} after scan.`);
                 updateStatus(`Connecting to ${friendId.substring(0,6)}...`, 'blue');
                 await createOfferForPeer(friendId);
-            } else {
-                console.warn("WebSocket not ready, cannot initiate connection automatically after scan. Will try on WS connect.");
-                pendingConnectionFriendId = friendId;
-            }
+            } else { console.warn("WebSocket not ready, cannot initiate connection automatically after scan."); }
         } else {
             const msg = "Invalid QR code: URL does not contain an 'id' parameter.";
             console.warn(msg);
@@ -1709,7 +1590,7 @@ async function handleCallBusy(peerId) {
 
 function setupEventListeners() {
     window.addEventListener('resize', () => {
-        if (qrElement && qrElement.style.display !== 'none' && myDeviceId) {
+        if (qrElement && qrElement.style.display !== 'none') {
             const myAppUrl = window.location.origin + '/?id=' + myDeviceId;
             updateQrCodeWithValue(myAppUrl);
         }
@@ -1735,14 +1616,18 @@ function setupEventListeners() {
     document.addEventListener('visibilitychange', () => {
         if (document.visibilityState === 'visible') {
           console.log('App became visible. Checking WebSocket connection.');
+          // isAttemptingReconnect フラグも考慮して、既存の再接続処理と競合しないようにする
           if ((!signalingSocket || signalingSocket.readyState !== WebSocket.OPEN) && !isAttemptingReconnect) {
             console.log('WebSocket not connected or in a bad state upon visibility change. Attempting to reconnect.');
             updateStatus('Re-checking connection...', 'blue');
+            // 既存の再接続ロジックを尊重しつつ、再接続を促す
+            // 既にタイマーが動いている場合はそれをクリアし、試行回数をリセットして最初から試みる
             if (wsReconnectTimer) {
               clearTimeout(wsReconnectTimer);
               wsReconnectTimer = null;
             }
-            wsReconnectAttempts = 0;
+            wsReconnectAttempts = 0; // 新規の再接続シーケンスとして扱う
+            // isAttemptingReconnect は connectWebSocket 内で true に設定される
             connectWebSocket();
           } else if (signalingSocket && signalingSocket.readyState === WebSocket.OPEN) {
             console.log('WebSocket is connected upon visibility change.');
@@ -1797,37 +1682,17 @@ document.addEventListener('DOMContentLoaded', async () => {
       updateStatus("Database initialization failed.", "red");
   }
 
-  let idFromDb = await getDeviceIdFromDb();
-  if (idFromDb) {
-    myDeviceId = idFromDb;
-    console.log("My Device ID (from IndexedDB):", myDeviceId);
-  } else {
-    let idFromLocalStorage = localStorage.getItem('cybernetcall-deviceId');
-    if (idFromLocalStorage) {
-      myDeviceId = idFromLocalStorage;
-      console.log("My Device ID (from localStorage, migrating to IndexedDB):", myDeviceId);
-    } else {
-      myDeviceId = generateUUID();
-      console.log("My Device ID (newly generated):", myDeviceId);
-    }
-    if (myDeviceId) await saveDeviceIdToDb(myDeviceId);
-  }
+  myDeviceId = localStorage.getItem('cybernetcall-deviceId') || generateUUID();
   localStorage.setItem('cybernetcall-deviceId', myDeviceId);
-  console.log("[ID Init] Final myDeviceId:", myDeviceId);
+  console.log("My Device ID:", myDeviceId);
 
   await displayInitialPosts();
 
   setupEventListeners();
 
-  if (myDeviceId) {
-    const myAppUrl = window.location.origin + '/?id=' + myDeviceId;
-    console.log("Generating QR code for URL:", myAppUrl);
-    updateQrCodeWithValue(myAppUrl);
-  } else {
-    console.error("Device ID is not available. Cannot generate QR code.");
-    updateStatus("Error: Device ID missing. Cannot generate QR code.", "red");
-  }
-
+  const myAppUrl = window.location.origin + '/?id=' + myDeviceId;
+  console.log("Generating QR code for URL:", myAppUrl);
+  updateQrCodeWithValue(myAppUrl);
 
   updateStatus('Initializing...', 'black');
   setInteractionUiEnabled(false);
@@ -1841,15 +1706,20 @@ document.addEventListener('DOMContentLoaded', async () => {
         registration.onupdatefound = () => {
           const installingWorker = registration.installing;
           if (installingWorker) {
-                let refreshing;
+                let refreshing; // リロード処理の重複実行を防ぐフラグ        
             installingWorker.onstatechange = () => {
               if (installingWorker.state === 'installed') {
                 if (navigator.serviceWorker.controller) {
+                     // 新しいコンテンツが利用可能で、現在のページは古いSWによって制御されている
                      console.log('New content is available and has been installed. Please refresh to update.');
+                     // ユーザーに更新を促すシンプルなconfirmダイアログ
                      if (confirm('A new version of the app is available. Refresh now to get the latest features?')) {
+                       // 新しいService Workerが待機状態(waiting)の場合、skipWaitingを指示して即座にアクティベートさせる
+                       // (ただし、installイベントで既にself.skipWaiting()を呼んでいるので、通常は不要かもしれない)
                        if (registration.waiting) {
                            registration.waiting.postMessage({ type: 'SKIP_WAITING' });
                        }
+                       // controllerchangeイベントを監視し、新しいSWが制御を開始したらリロード
                        navigator.serviceWorker.addEventListener('controllerchange', () => {
                            if (refreshing) return;
                            window.location.reload();
@@ -1859,6 +1729,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                        updateStatus('New version available. Please refresh soon to update.', 'blue');
                      }
                 } else {
+                     // 初めてService Workerが登録され、コンテンツがキャッシュされた場合
                     console.log('Content is cached for offline use.');
                 }
               }
@@ -1884,12 +1755,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       console.log(`Detected incoming friend ID from URL: ${incomingFriendId}`);
       updateStatus(`Connecting from link with ${incomingFriendId.substring(0,6)}...`, 'blue');
       await addFriend(incomingFriendId);
-      currentAppState = AppState.CONNECTING;
-      if (signalingSocket && signalingSocket.readyState === WebSocket.OPEN) {
-        await createOfferForPeer(incomingFriendId);
-      } else {
-        pendingConnectionFriendId = incomingFriendId;
-      }
+      pendingConnectionFriendId = incomingFriendId;
   }
 
 });
