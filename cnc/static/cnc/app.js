@@ -42,17 +42,21 @@ const MAX_PEER_RECONNECT_ATTEMPTS = 3;
 const INITIAL_PEER_RECONNECT_DELAY_MS = 3000;
 
 const DB_NAME = 'cybernetcall-db';
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 
 let dbPromise = typeof idb !== 'undefined' ? idb.openDB(DB_NAME, DB_VERSION, {
-  upgrade(db, oldVersion) {
+    upgrade(db, oldVersion, newVersion, transaction) {
+        console.log(`[DB Upgrade] Upgrading database from version ${oldVersion} to ${newVersion}. Transaction:`, transaction);
     if (oldVersion < 1 && !db.objectStoreNames.contains('posts')) {
-      db.createObjectStore('posts', { keyPath: 'id' });
+        console.log('[DB Upgrade] Creating "posts" object store.');
+        console.log('[DB Upgrade] Creating "friends" object store.');
+        db.createObjectStore('posts', { keyPath: 'id' });
     }
     if (oldVersion < 2 && !db.objectStoreNames.contains('friends')) {
       db.createObjectStore('friends', { keyPath: 'id' });
-    }
-    if (oldVersion < 3 && !db.objectStoreNames.contains('deviceInfo')) {
+    }    
+    if (oldVersion < 4 && !db.objectStoreNames.contains('deviceInfo')) {
+        console.log('[DB Upgrade] Creating "deviceInfo" object store.');
       db.createObjectStore('deviceInfo', { keyPath: 'id' });
     }
   }
@@ -1798,28 +1802,30 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   let idFromDb = await getDeviceIdFromDb();
+  console.log("[ID Init] Attempted to get ID from IndexedDB, result:", idFromDb);
   if (idFromDb) {
     myDeviceId = idFromDb;
     console.log("My Device ID (from IndexedDB):", myDeviceId);
   } else {
     let idFromLocalStorage = localStorage.getItem('cybernetcall-deviceId');
+    console.log("[ID Init] ID not in IndexedDB. Attempted to get ID from LocalStorage, result:", idFromLocalStorage);
     if (idFromLocalStorage) {
       myDeviceId = idFromLocalStorage;
       console.log("My Device ID (from localStorage, migrating to IndexedDB):", myDeviceId);
     } else {
       myDeviceId = generateUUID();
-      console.log("My Device ID (newly generated):", myDeviceId);
-    }
-    if (myDeviceId) await saveDeviceIdToDb(myDeviceId);
+      console.log("[ID Init] ID not in IndexedDB. Attempted to get ID from LocalStorage, result:", idFromLocalStorage);
+      if (myDeviceId && typeof myDeviceId === 'string' && myDeviceId.length > 0) {
+        console.log("[ID Init] Saving fetched/generated ID to IndexedDB:", myDeviceId);
+        await saveDeviceIdToDb(myDeviceId);
+      } else {
+        console.error("[ID Init] Failed to obtain a valid device ID. myDeviceId is:", myDeviceId);
+      }
   }
   localStorage.setItem('cybernetcall-deviceId', myDeviceId);
   console.log("[ID Init] Final myDeviceId:", myDeviceId);
 
-  await displayInitialPosts();
-
-  setupEventListeners();
-
-  if (myDeviceId) {
+  if (myDeviceId && typeof myDeviceId === 'string' && myDeviceId.length > 0) {
     const myAppUrl = window.location.origin + '/?id=' + myDeviceId;
     console.log("Generating QR code for URL:", myAppUrl);
     updateQrCodeWithValue(myAppUrl);
@@ -1828,7 +1834,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     updateStatus("Error: Device ID missing. Cannot generate QR code.", "red");
   }
 
-
+  await displayInitialPosts();
+  setupEventListeners();
+  
   updateStatus('Initializing...', 'black');
   setInteractionUiEnabled(false);
 
