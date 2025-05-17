@@ -1245,7 +1245,7 @@ function handleSendFile() {
 }
 
 async function toggleVideoCall() {
-    if (currentAppState !== AppState.CONNECTED && currentAppState !== AppState.CONNECTING) {
+  if (currentAppState !== AppState.CONNECTED && currentAppState !== AppState.CONNECTING && !Object.values(peers).some(p => p && p.connectionState === 'connected')) {
         console.warn("Call button clicked but not connected.");
         alert("Please connect to a peer first.");
         return;
@@ -1254,6 +1254,10 @@ async function toggleVideoCall() {
         console.log("Starting video call...");
         try {
             localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+            const videoTrack = localStream.getVideoTracks()[0];
+            if (videoTrack) {
+                videoTrack.enabled = false;
+            }
             if (localVideoElement) localVideoElement.srcObject = localStream;
 
             const renegotiationPromises = Object.entries(peers).map(async ([peerUUID, peer]) => {
@@ -1273,12 +1277,7 @@ async function toggleVideoCall() {
             });
             await Promise.all(renegotiationPromises);
 
-            const videoTrack = localStream.getVideoTracks()[0];
-            if (videoTrack) {
-                videoTrack.enabled = false;
-                if(videoButton) videoButton.textContent = '🚫';
-                console.log(`Local video started disabled`);
-            }
+            if(videoButton) videoButton.textContent = '🚫';
             if(callButton) callButton.textContent = 'End Call';
         } catch (error) {
             console.error(`Error starting video call (getUserMedia): Name: ${error.name}, Message: ${error.message}`, error);
@@ -1346,8 +1345,11 @@ function toggleLocalVideo() {
             if(videoButton) videoButton.textContent = videoTrack.enabled ? '🎥' : '🚫';
             console.log(`Local video ${videoTrack.enabled ? 'enabled' : 'disabled'}`);
         }
-    }
+      } else {
+          console.warn("toggleLocalVideo called but no localStream available.");  
+      }
 }
+
 
 function handleRemoteTrack(peerUUID, track, stream) {
     console.log(`[handleRemoteTrack] Called for peer ${peerUUID}, track kind: ${track.kind}, stream ID: ${stream?.id}`);
@@ -1759,3 +1761,4 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
 });
+
