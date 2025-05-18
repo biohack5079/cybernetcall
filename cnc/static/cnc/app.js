@@ -38,13 +38,20 @@ let receiveBuffer = {};
 let receivedSize = {};
 let incomingFileInfo = {};
 
-let dbPromise = typeof idb !== 'undefined' ? idb.openDB('cybernetcall-db', 2, {
+const DB_NAME = 'cybernetcall-db';
+const DB_VERSION = 3; // Version up for new store
+
+let dbPromise = typeof idb !== 'undefined' ? idb.openDB(DB_NAME, DB_VERSION, {
   upgrade(db, oldVersion) {
     if (!db.objectStoreNames.contains('posts')) {
       db.createObjectStore('posts', { keyPath: 'id' });
     }
     if (oldVersion < 2 && !db.objectStoreNames.contains('friends')) {
       db.createObjectStore('friends', { keyPath: 'id' });
+    }
+    if (oldVersion < 3 && !db.objectStoreNames.contains('fileChunks')) {
+      const store = db.createObjectStore('fileChunks', { keyPath: ['fileId', 'chunkIndex'] });
+      store.createIndex('by_fileId', 'fileId');
     }
   }
 }) : null;
@@ -565,6 +572,7 @@ async function createPeerConnection(peerUUID) {
     peers[peerUUID] = peer;
     console.log(`PeerConnection created for ${peerUUID}.`);
     return peer;
+
   } catch (error) {
     console.error(`Error creating PeerConnection for ${peerUUID}:`, error);
     updateStatus(`Connection setup error: ${error.message}`, 'red');
@@ -710,6 +718,7 @@ async function handleOfferAndCreateAnswer(peerUUID, offerSdp) {
     const answer = await peer.createAnswer();
     await peer.setLocalDescription(answer);
     console.log(`Answer created and local description set for ${peerUUID}.`);
+    
     sendSignalingMessage({
         type: 'answer',
         payload: { target: peerUUID, sdp: peer.localDescription }
@@ -909,8 +918,8 @@ async function processTextMessage(dataString, senderUUID) {
                     name: message.name,
                     size: message.size,
                     type: message.fileType
+
                 };
-                receiveBuffer[message.fileId] = [];
                 receivedSize[message.fileId] = 0;
 
                 console.log(`Receiving metadata for file: ${message.name} (${message.size} bytes) from ${senderUUID.substring(0,6)}`);
@@ -934,72 +943,80 @@ async function processTextMessage(dataString, senderUUID) {
     }
 }
 
-function processFileChunk(chunkMessage) {
+async function processFileChunk(chunkMessage) {
     const fileId = chunkMessage.fileId;
     const chunkIndex = chunkMessage.index;
     const isLast = chunkMessage.last;
 
-    if (!incomingFileInfo[fileId] || !receiveBuffer[fileId]) {
-        console.error("Received chunk for unknown file transfer:", fileId);
+
+    if (!incomingFileInfo[fileId]) {
+      console.error("Received chunk for unknown file transfer (no metadata):", fileId);
         return;
     }
-
+    let db;
     try {
         const byteString = atob(chunkMessage.data);
         const byteArray = new Uint8Array(byteString.length);
         for (let i = 0; i < byteString.length; i++) {
             byteArray[i] = byteString.charCodeAt(i);
         }
-        const chunk = byteArray.buffer;
 
-        const isNewChunkForSizeCalculation = receiveBuffer[fileId][chunkIndex] === undefined;
+        const chunkData = byteArray.buffer;
 
-        receiveBuffer[fileId][chunkIndex] = chunk;
-
-        if (isNewChunkForSizeCalculation) {
-            if ((receivedSize[fileId] + chunk.byteLength) > incomingFileInfo[fileId].size && !isLast) {
-                 console.error(`[File Receive Error] Receiving new chunk ${chunkIndex} for file ${fileId} (size ${chunk.byteLength}) would exceed expected total size (${incomingFileInfo[fileId].size}). Current received: ${receivedSize[fileId]}. Aborting.`);
-                 if (fileTransferStatusElement) fileTransferStatusElement.innerHTML = DOMPurify.sanitize(`Error receiving ${incomingFileInfo[fileId].name} (size mismatch)`);
-                 delete incomingFileInfo[fileId];
-                 delete receiveBuffer[fileId];
-                 delete receivedSize[fileId];
-                 return;
-            }
-            receivedSize[fileId] += chunk.byteLength;
-
+        if (!dbPromise) {
+            console.error("dbPromise not available, cannot save chunk to DB.");
+            if (fileTransferStatusElement) fileTransferStatusElement.innerHTML = DOMPurify.sanitize(`DB Error for ${incomingFileInfo[fileId]?.name || 'file'}`);
+            // No db instance to pass, cleanup memory only
+            delete incomingFileInfo[fileId];
+            if (receivedSize) delete receivedSize[fileId];
+            return;
         }
 
-        console.log(`[File Chunk] ID: ${fileId}, Index: ${chunkIndex}, Size: ${chunk.byteLength}, Total Received: ${receivedSize[fileId]}, Expected Size: ${incomingFileInfo[fileId].size}, Is Last: ${isLast}`);
+        db = await dbPromise; 
+        const tx = db.transaction('fileChunks', 'readwrite');
+        await tx.store.put({ fileId: fileId, chunkIndex: chunkIndex, data: chunkData });
+        await tx.done;
+        console.log(`[File Chunk DB] Saved chunk ${chunkIndex} for file ${fileId} to IndexedDB.`);
+
+        // Update received size by querying DB for accuracy
+        const readTxForSize = db.transaction('fileChunks', 'readonly');
+        const allChunksForFileFromDb = await readTxForSize.objectStore('fileChunks').index('by_fileId').getAll(fileId);
+        await readTxForSize.done;
+        let actualReceivedSize = 0;
+        allChunksForFileFromDb.forEach(c => actualReceivedSize += c.data.byteLength);
+        receivedSize[fileId] = actualReceivedSize;
+
+        console.log(`[File Chunk] ID: ${fileId}, Index: ${chunkIndex}, Size: ${chunkData.byteLength}, Total Received (DB): ${receivedSize[fileId]}, Expected: ${incomingFileInfo[fileId].size}, Is Last: ${isLast}`);
 
         const progress = Math.round((receivedSize[fileId] / incomingFileInfo[fileId].size) * 100);
-         if (fileTransferStatusElement) {
-            fileTransferStatusElement.textContent = `Receiving ${incomingFileInfo[fileId].name}... ${progress}%`;
+
+        if (fileTransferStatusElement) {
+          fileTransferStatusElement.innerHTML = DOMPurify.sanitize(`Receiving ${incomingFileInfo[fileId].name}... ${progress}%`);
+
         }
 
         if (isLast) {
             if (receivedSize[fileId] !== incomingFileInfo[fileId].size) {
                 console.error(`[File Assembly Error] Final size mismatch for file ${fileId}. Expected ${incomingFileInfo[fileId].size}, but received ${receivedSize[fileId]}.`);
                 if (fileTransferStatusElement) fileTransferStatusElement.innerHTML = DOMPurify.sanitize(`Error assembling ${incomingFileInfo[fileId].name} (final size error)`);
-                delete incomingFileInfo[fileId];
-                delete receiveBuffer[fileId];
-                delete receivedSize[fileId];
+                await cleanupFileTransferData(fileId, db);
                 return;
             }
 
             console.log("Received last chunk for file:", incomingFileInfo[fileId].name);
-            const receivedChunkCount = receiveBuffer[fileId].filter(c => c !== undefined).length;
-            const expectedChunks = chunkIndex + 1;
 
-            if (receivedChunkCount < expectedChunks) {
-                 console.warn(`Missing chunks for file ${fileId}. Expected ${expectedChunks}, got ${receivedChunkCount}. Cannot assemble.`);
-                 if (fileTransferStatusElement) fileTransferStatusElement.innerHTML = DOMPurify.sanitize(`Error receiving ${incomingFileInfo[fileId].name} (missing chunks)`);
-                 delete incomingFileInfo[fileId];
-                 delete receiveBuffer[fileId];
-                 delete receivedSize[fileId];
+            // Use allChunksForFileFromDb which was fetched earlier for size calculation
+            allChunksForFileFromDb.sort((a, b) => a.chunkIndex - b.chunkIndex);
+
+            if (allChunksForFileFromDb.length !== chunkIndex + 1) {
+                 console.warn(`Missing chunks for file ${fileId}. Expected ${chunkIndex + 1}, got ${allChunksForFileFromDb.length} from DB. Cannot assemble.`);
+                 if (fileTransferStatusElement) fileTransferStatusElement.innerHTML = DOMPurify.sanitize(`Error receiving ${incomingFileInfo[fileId].name} (missing chunks from DB)`);
+                 await cleanupFileTransferData(fileId, db);
                  return;
             }
 
-            const fileBlob = new Blob(receiveBuffer[fileId], { type: incomingFileInfo[fileId].type });
+            const orderedChunkData = allChunksForFileFromDb.map(c => c.data);
+            const fileBlob = new Blob(orderedChunkData, { type: incomingFileInfo[fileId].type });
 
             const downloadLink = document.createElement('a');
             downloadLink.href = URL.createObjectURL(fileBlob);
@@ -1009,23 +1026,43 @@ function processFileChunk(chunkMessage) {
             downloadLink.style.marginTop = '5px';
 
             if (fileTransferStatusElement) {
-                fileTransferStatusElement.innerHTML = ''; 
+              fileTransferStatusElement.innerHTML = '';
                 fileTransferStatusElement.appendChild(downloadLink);
             } else {
                 messageAreaElement.appendChild(downloadLink);
             }
-
-            delete incomingFileInfo[fileId];
-            delete receiveBuffer[fileId];
-            delete receivedSize[fileId];
+            await cleanupFileTransferData(fileId, db, true); // true for transferComplete
         }
-    } catch (error) {
-        console.error("Error processing file chunk:", error, chunkMessage);
-        if (fileTransferStatusElement) fileTransferStatusElement.innerHTML = DOMPurify.sanitize(`Error processing chunk for ${incomingFileInfo[fileId]?.name || 'unknown file'}`);
-        delete incomingFileInfo[fileId];
-        delete receiveBuffer[fileId];
-        delete receivedSize[fileId];
+    } catch (error) { 
+
+    console.error("Error processing file chunk with IndexedDB:", error, chunkMessage);
+    if (fileTransferStatusElement) fileTransferStatusElement.innerHTML = DOMPurify.sanitize(`Error processing chunk for ${incomingFileInfo[fileId]?.name || 'unknown file'}`);    
+    // Pass the db instance if available (it might be null if dbPromise failed early in try)
+    await cleanupFileTransferData(fileId, db); 
+  } 
+} 
+                      
+async function cleanupFileTransferData(fileId, db, transferComplete = false) {
+    console.log(`Cleaning up data for file transfer ${fileId}. Complete: ${transferComplete}`);
+
+
+    if (db) {
+        try {
+            const deleteTx = db.transaction('fileChunks', 'readwrite');
+            const allChunksForFile = await deleteTx.objectStore('fileChunks').index('by_fileId').getAllKeys(fileId);
+            for (const key of allChunksForFile) {
+                 // Since keyPath is ['fileId', 'chunkIndex'], key will be an array
+                 await deleteTx.objectStore('fileChunks').delete(key);
+            }
+            await deleteTx.done;
+            console.log(`[File Chunk DB] Deleted all chunks for file ${fileId} from IndexedDB.`);
+        } catch (dbError) {
+            console.error(`[File Chunk DB] Error deleting chunks for file ${fileId}:`, dbError);
+        }
     }
+    // Always delete in-memory tracking info
+    delete incomingFileInfo[fileId];
+    if (receivedSize) delete receivedSize[fileId];
 }
 
 function broadcastMessage(messageString) {
@@ -1188,7 +1225,7 @@ function handleSendFile() {
         try {
             const end = Math.min(o + CHUNK_SIZE, snapshottedFileSize);
             const slice = file.slice(o, end);
-            fileReader.readAsArrayBuffer(slice);
+            fileReader.readAsDataURL(slice); 
         } catch (readError) {
              console.error('Error reading file slice:', readError);
              alert('Failed to read file slice.');
@@ -1199,21 +1236,24 @@ function handleSendFile() {
 
     const sendFileChunk = (chunkData, originalFileName, originalFileSizeInLogic, currentFileId, currentChunkIndex, currentOffset, retryCount = 0) => {
          try {
-             const base64String = btoa(String.fromCharCode(...new Uint8Array(chunkData)));
+
+          const dataUrlParts = chunkData.split(','); // chunkData is from readAsDataURL
+          const actualBase64Data = dataUrlParts.length > 1 ? dataUrlParts[1] : chunkData; 
+
              const chunkMessage = {
                  type: 'file-chunk',
                  fileId: currentFileId,
                  index: currentChunkIndex,
-                 last: ((currentOffset + chunkData.byteLength) >= originalFileSizeInLogic),
-                 data: base64String
+                 last: ((currentOffset + atob(actualBase64Data).length) >= originalFileSizeInLogic), 
+                 data: actualBase64Data
              };
              const chunkString = JSON.stringify(chunkMessage);
 
              if (!broadcastMessage(chunkString) && retryCount < 3) {
-                 throw new Error("Failed to send chunk to any peer.");
+              throw new Error(`Failed to send chunk ${currentChunkIndex} to any peer.`);
              }
 
-             const newOffset = currentOffset + chunkData.byteLength;
+             const newOffset = currentOffset + atob(actualBase64Data).length;
 
              const progress = Math.round((newOffset / originalFileSizeInLogic) * 100);
              if (fileTransferStatusElement) fileTransferStatusElement.textContent = `Sending ${originalFileName}... ${progress}%`;
@@ -1232,7 +1272,7 @@ function handleSendFile() {
              console.error(`Error sending chunk ${currentChunkIndex}:`, error);
              if (retryCount < 3) {
                  console.log(`Retrying chunk ${currentChunkIndex} (attempt ${retryCount + 1})...`);
-                 setTimeout(() => sendFileChunk(chunkData, originalFileName, originalFileSizeInLogic, currentFileId, currentChunkIndex, currentOffset, retryCount + 1), 1000);
+                 +                 setTimeout(() => sendFileChunk(chunkData, originalFileName, originalFileSizeInLogic, currentFileId, currentChunkIndex, currentOffset, retryCount + 1), 1000); 
              } else {
                  alert(`Failed to send chunk ${currentChunkIndex} after multiple retries.`);
                  if (fileTransferStatusElement) fileTransferStatusElement.innerHTML = DOMPurify.sanitize('Chunk send error');
@@ -1384,19 +1424,25 @@ function updateQrCodeWithValue(value) {
         console.warn("QR element not available for update.");
         return;
     }
-    console.log("Updating QR Code to show own User ID for adding friends.");
+    if (!value || typeof value !== 'string' || !value.includes('?id=')) {
+        console.warn("Invalid or no value provided to update QR code. Value:", value);
+        if (qrElement) {
+            qrElement.innerHTML = DOMPurify.sanitize("Your ID is not ready yet or invalid. Please wait or refresh.");
+            qrElement.style.display = 'block';
+        }
+        return;
+    }
+    console.log("Updating QR Code with value:", value);
     const size = Math.min(window.innerWidth * 0.7, 250);
-    if (typeof QRious !== 'undefined' && value) {
+    if (typeof QRious !== 'undefined') {
         try {
-            new QRious({ element: qrElement, value: value || '', size: size, level: 'L' });
+          new QRious({ element: qrElement, value: value, size: size, level: 'L' });
             qrElement.style.display = 'block';
             console.log("QR code updated and set to display: block");
         } catch (e) {
              console.error("QRious error:", e);
-             qrElement.textContent = "QR Code Generation Error";
+             qrElement.innerHTML = DOMPurify.sanitize("QR Code Generation Error");
         }
-    } else if (!value) {
-         console.warn("No value provided to update QR code.");
     } else {
         console.error("QRious not loaded.");
         setTimeout(() => updateQrCodeWithValue(value), 500);
@@ -1691,9 +1737,15 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   setupEventListeners();
 
-  const myAppUrl = window.location.origin + '/?id=' + myDeviceId;
-  console.log("Generating QR code for URL:", myAppUrl);
-  updateQrCodeWithValue(myAppUrl);
+  setupEventListeners();  
+  if (myDeviceId && typeof myDeviceId === 'string' && myDeviceId.length > 0) {
+    const myAppUrl = window.location.origin + '/?id=' + myDeviceId;
+    console.log("Generating QR code for URL:", myAppUrl);
+    updateQrCodeWithValue(myAppUrl);
+  } else {
+    console.error("Device ID is not available. Cannot generate QR code.");
+    updateStatus("Error: Device ID missing. Cannot generate QR code.", "red");
+  }
 
   updateStatus('Initializing...', 'black');
   setInteractionUiEnabled(false);
@@ -1760,4 +1812,3 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
 });
-
