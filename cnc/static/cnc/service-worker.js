@@ -62,19 +62,31 @@ self.addEventListener('activate', event => {
     ).then(() => {
       // Take control of uncontrolled clients (pages) immediately
       console.log('[Service Worker] Claiming clients');
-      return self.clients.claim();
+      return self.clients.claim().then(() => {
+        // After claiming clients, send a message to all controlled clients
+        // This can be used by the app to know a new SW is active or app was launched
+        self.clients.matchAll().then(clients => {
+          clients.forEach(client => {
+            console.log('[Service Worker] Sending APP_ACTIVATED message to client:', client.id);
+            client.postMessage({ type: 'APP_ACTIVATED', newSW: true });
+          });
+        });
+      });
     })
   );
 });
 
+// Listen for messages from the client (app.js) if needed in the future
+self.addEventListener('message', event => {
+  if (event.data && event.data.type === 'REQUEST_CLIENTS_INFO') {
+    console.log('[Service Worker] Received message from client:', event.data);
+    // Example: Respond with some info or trigger other SW actions
+    // event.source.postMessage({ type: 'CLIENTS_INFO_RESPONSE', data: 'Some info from SW' });
+  }
+});
+
 // Event listener for the 'fetch' event (intercepting network requests)
 self.addEventListener('fetch', event => {
-  // Only handle GET requests
-  if (event.request.method !== 'GET') {
-    // console.log('[Service Worker] Ignoring non-GET request:', event.request.method, event.request.url);
-    return;
-  }
-
   const requestUrl = new URL(event.request.url);
 
   // Apply Stale-While-Revalidate strategy for app.js
