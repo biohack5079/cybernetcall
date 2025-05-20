@@ -24,7 +24,8 @@ let currentCallerId = null;
 let friendListElement;
 let pendingConnectionFriendId = null;
 let receivedSize = {};
-let incomingFileInfo = {};
+let incomingFileInfo = {}; // ← ここで定義されているはず
+let lastReceivedFileChunkMeta = {}; // { [peerUUID]: metadata } Stores metadata for the next expected binary file chunk
 
 
 let onlineFriendsCache = new Set(); // オンラインの友達IDをキャッシュ
@@ -941,28 +942,34 @@ function closePeerConnection(peerUUID) {
 
 function handleDataChannelMessage(event, senderUUID) {
   if (event.data instanceof ArrayBuffer) {
-    try {
-        const message = JSON.parse(new TextDecoder().decode(event.data));
-        if (message.type === 'file-chunk') {
-             processFileChunk(message);
-        } else {
-             processTextMessage(new TextDecoder().decode(event.data), senderUUID);
-        }
-    } catch(e) {
-        console.warn("Received ArrayBuffer that wasn't a JSON chunk, attempting text decode:", e);
-        processTextMessage(new TextDecoder().decode(event.data), senderUUID);
+    // This is expected to be a binary file chunk
+    if (lastReceivedFileChunkMeta[senderUUID]) {
+        const meta = lastReceivedFileChunkMeta[senderUUID];
+        // Pass the metadata and the ArrayBuffer data to processFileChunk
+        processFileChunk(meta, event.data); // event.data is the ArrayBuffer
+        lastReceivedFileChunkMeta[senderUUID] = null; // Consume the metadata
+      } else {
+        console.warn(`Received ArrayBuffer from ${senderUUID} without preceding file-chunk metadata. Discarding.`);
+        // Optionally, try to decode as text if some fallback is desired, but this should ideally not happen.
+        // try {
+        //   processTextMessage(new TextDecoder().decode(event.data), senderUUID);
+        // } catch (e) {
+        //   console.error("Failed to decode unexpected ArrayBuffer as text.", e);
+        // }
     }
   } else if (typeof event.data === 'string') {
     processTextMessage(event.data, senderUUID);
   } else {
-    console.warn("Received unexpected data type:", typeof event.data);
+    console.warn(`Received unexpected data type from ${senderUUID}:`, typeof event.data);
   }
 }
 
 async function processTextMessage(dataString, senderUUID) {
     try {
+        console.log(`[Receiver processTextMessage] Raw string data from ${senderUUID}:`, dataString.substring(0, 200) + (dataString.length > 200 ? '...' : ''));
         const message = JSON.parse(dataString);
-        switch (message.type) {
+        console.log(`[Receiver processTextMessage] Parsed message from ${senderUUID}:`, JSON.parse(JSON.stringify(message))); // Deep copy for logging
+        switch (message.type) { // Ensure this matches exactly what sender sends for file-metadata
             case 'post':
                 message.sender = message.sender || senderUUID;
                 await savePost(message);
@@ -987,6 +994,7 @@ async function processTextMessage(dataString, senderUUID) {
                     type: message.fileType
 
                 };
+                console.log(`[Receiver processTextMessage] 'file-metadata' case: incomingFileInfo for ${message.fileId} SET to:`, JSON.parse(JSON.stringify(incomingFileInfo[message.fileId])));      
                 receivedSize[message.fileId] = 0;
 
                 console.log(`Receiving metadata for file: ${message.name} (${message.size} bytes) from ${senderUUID.substring(0,6)}`);
@@ -995,8 +1003,10 @@ async function processTextMessage(dataString, senderUUID) {
                 }
                 break;
             case 'file-chunk':
-                 processFileChunk(message);
-                 break;
+                // This is now metadata for an upcoming binary chunk
+                lastReceivedFileChunkMeta[senderUUID] = { ...message, senderUUID }; // Store it, associate with sender
+                console.log(`[Receiver processTextMessage] 'file-chunk' case: Stored chunk-meta for ${message.fileId}, chunk ${message.index} from ${senderUUID}.`);
+                break;
             default:
                 console.warn("Received unknown message type:", message.type);
                 if (!message.type && message.content && message.id) {
@@ -1006,29 +1016,26 @@ async function processTextMessage(dataString, senderUUID) {
                 }
         }
     } catch (error) {
-        console.error("Error parsing received data:", error, dataString);
+        console.error(`[Receiver processTextMessage] Error parsing data from ${senderUUID}:`, error, "Raw data:", dataString.substring(0, 200) + (dataString.length > 200 ? '...' : ''));
     }
 }
 
-async function processFileChunk(chunkMessage) {
-    const fileId = chunkMessage.fileId;
-    const chunkIndex = chunkMessage.index;
-    const isLast = chunkMessage.last;
+async function processFileChunk(chunkMeta, chunkDataAsArrayBuffer) {
+    const { fileId, index: chunkIndex, last: isLast, senderUUID } = chunkMeta;
 
-
+    console.log(`[Receiver processFileChunk] For fileId ${fileId}, chunk ${chunkIndex}. Current incomingFileInfo[${fileId}]:`, incomingFileInfo[fileId] ? JSON.parse(JSON.stringify(incomingFileInfo[fileId])) : 'NOT FOUND', "Full incomingFileInfo:", JSON.parse(JSON.stringify(incomingFileInfo)));
     if (!incomingFileInfo[fileId]) {
-      console.error("Received chunk for unknown file transfer (no metadata):", fileId);
+      console.error(`Received chunk data for unknown file transfer (no metadata): ${fileId} from ${senderUUID}`);
         return;
     }
     let db;
     try {
-        const byteString = atob(chunkMessage.data);
-        const byteArray = new Uint8Array(byteString.length);
-        for (let i = 0; i < byteString.length; i++) {
-            byteArray[i] = byteString.charCodeAt(i);
+        // chunkDataAsArrayBuffer is already an ArrayBuffer
+        if (!(chunkDataAsArrayBuffer instanceof ArrayBuffer)) {
+            console.error(`processFileChunk called with non-ArrayBuffer data for file ${fileId} from ${senderUUID}`, chunkDataAsArrayBuffer);
+            await cleanupFileTransferData(fileId, null); // Attempt cleanup even if db not opened yet
+            return;
         }
-
-        const chunkData = byteArray.buffer;
 
         if (!dbPromise) {
             console.error("dbPromise not available, cannot save chunk to DB.");
@@ -1041,7 +1048,7 @@ async function processFileChunk(chunkMessage) {
 
         db = await dbPromise; 
         const tx = db.transaction('fileChunks', 'readwrite');
-        await tx.store.put({ fileId: fileId, chunkIndex: chunkIndex, data: chunkData });
+        await tx.store.put({ fileId: fileId, chunkIndex: chunkIndex, data: chunkDataAsArrayBuffer });
         await tx.done;
         console.log(`[File Chunk DB] Saved chunk ${chunkIndex} for file ${fileId} to IndexedDB.`);
 
@@ -1053,7 +1060,7 @@ async function processFileChunk(chunkMessage) {
         allChunksForFileFromDb.forEach(c => actualReceivedSize += c.data.byteLength);
         receivedSize[fileId] = actualReceivedSize;
 
-        console.log(`[File Chunk] ID: ${fileId}, Index: ${chunkIndex}, Size: ${chunkData.byteLength}, Total Received (DB): ${receivedSize[fileId]}, Expected: ${incomingFileInfo[fileId].size}, Is Last: ${isLast}`);
+        console.log(`[File Chunk] ID: ${fileId}, Index: ${chunkIndex}, Size: ${chunkDataAsArrayBuffer.byteLength}, Total Received (DB): ${receivedSize[fileId]}, Expected: ${incomingFileInfo[fileId].size}, Is Last: ${isLast}`);
 
         const progress = Math.round((receivedSize[fileId] / incomingFileInfo[fileId].size) * 100);
 
@@ -1101,13 +1108,33 @@ async function processFileChunk(chunkMessage) {
         }
     } catch (error) { 
 
-    console.error("Error processing file chunk with IndexedDB:", error, chunkMessage);
+        console.error(`Error processing file chunk data for file ${fileId} (chunk ${chunkIndex}) from ${senderUUID} with IndexedDB:`, error, chunkMeta);
     if (fileTransferStatusElement) fileTransferStatusElement.innerHTML = DOMPurify.sanitize(`Error processing chunk for ${incomingFileInfo[fileId]?.name || 'unknown file'}`);    
 
     await cleanupFileTransferData(fileId, db); 
   } 
 } 
-                      
+
+function broadcastMessage(messageString) {
+    let sentToAtLeastOne = false;
+    const openChannels = Object.entries(dataChannels).filter(([uuid, dc]) => dc && dc.readyState === 'open');
+
+    if (openChannels.length > 0) {
+        openChannels.forEach(([uuid, dc]) => {
+            try {
+                dc.send(messageString);
+                sentToAtLeastOne = true;
+                console.log(`Broadcasted message to ${uuid}`);
+            } catch (error) {
+                console.error(`Error sending message to ${uuid}:`, error);
+            }
+        });
+    } else {
+        console.warn("Cannot broadcast message: No open DataChannels.");
+    }
+    return sentToAtLeastOne;
+}
+
 async function cleanupFileTransferData(fileId, db, transferComplete = false) {
     console.log(`Cleaning up data for file transfer ${fileId}. Complete: ${transferComplete}`);
 
@@ -1131,19 +1158,19 @@ async function cleanupFileTransferData(fileId, db, transferComplete = false) {
     if (receivedSize) delete receivedSize[fileId];
 }
 
-function broadcastMessage(messageString) {
+function broadcastBinaryData(dataBuffer) {
     const openChannels = Object.entries(dataChannels).filter(([uuid, dc]) => dc && dc.readyState === 'open');
     if (openChannels.length > 0) {
         openChannels.forEach(([uuid, dc]) => {
             try {
-                dc.send(messageString);
+                dc.send(dataBuffer);
             } catch (error) {
-                console.error(`Error sending message to ${uuid}:`, error);
+                console.error(`Error sending binary data to ${uuid}:`, error);
             }
         });
         return true;
     } else {
-        console.warn("Cannot broadcast message: No open DataChannels.");
+        console.warn("Cannot broadcast binary data: No open DataChannels.");
         return false;
     }
 }
@@ -1245,6 +1272,7 @@ function handleSendFile() {
     };
     const metadataString = JSON.stringify(metadata);
 
+    console.log(`[Sender handleSendFile] Broadcasting 'file-metadata':`, metadata);    
     if (!broadcastMessage(metadataString)) {
         alert("Failed to send file metadata to any peer.");
         sendFileButton.disabled = false;
@@ -1267,31 +1295,33 @@ function handleSendFile() {
         sendFileButton.disabled = false;
     });
     fileReader.addEventListener('load', e => {
-        const chunk = e.target.result;
+        const chunkArrayBuffer = e.target.result; // This is an ArrayBuffer
 
         if (openChannels.length > 0) {
             const firstChannel = openChannels[0][1];
             const bufferedAmount = firstChannel.bufferedAmount || 0;
-            if (bufferedAmount > CHUNK_SIZE * 8) {
+            // Adjust buffer threshold as needed, e.g., 1MB or 16 chunks
+            if (bufferedAmount > CHUNK_SIZE * 16) { 
                 console.warn(`DataChannel buffer high (${bufferedAmount}), pausing send...`);
                 setTimeout(() => {
-                    sendFileChunk(chunk, file.name, snapshottedFileSize, fileId, chunkIndex, offset);
+                    sendFileChunk(chunkArrayBuffer, file.name, snapshottedFileSize, fileId, chunkIndex, offset);
                 }, 200);
                 return;
             }
         } else {
             console.warn("No open channels to send file chunk.");
+            if (fileTransferStatusElement) fileTransferStatusElement.innerHTML = DOMPurify.sanitize('Connection lost during send');            
             sendFileButton.disabled = false;
             return;
         }
-        sendFileChunk(chunk, file.name, snapshottedFileSize, fileId, chunkIndex, offset);
+        sendFileChunk(chunkArrayBuffer, file.name, snapshottedFileSize, fileId, chunkIndex, offset);
     });
 
     const readSlice = o => {
         try {
             const end = Math.min(o + CHUNK_SIZE, snapshottedFileSize);
             const slice = file.slice(o, end);
-            fileReader.readAsDataURL(slice); 
+            fileReader.readAsArrayBuffer(slice); // Read as ArrayBuffer
         } catch (readError) {
              console.error('Error reading file slice:', readError);
              alert('Failed to read file slice.');
@@ -1300,26 +1330,40 @@ function handleSendFile() {
         }
     };
 
-    const sendFileChunk = (chunkData, originalFileName, originalFileSizeInLogic, currentFileId, currentChunkIndex, currentOffset, retryCount = 0) => {
+    const sendFileChunk = (chunkDataAsArrayBuffer, originalFileName, originalFileSizeInLogic, currentFileId, currentChunkIndex, currentOffset, retryCount = 0) => {
          try {
 
-          const dataUrlParts = chunkData.split(','); // chunkData is from readAsDataURL
-          const actualBase64Data = dataUrlParts.length > 1 ? dataUrlParts[1] : chunkData; 
-
-             const chunkMessage = {
+            const chunkMetaMessage = {
                  type: 'file-chunk',
                  fileId: currentFileId,
                  index: currentChunkIndex,
-                 last: ((currentOffset + atob(actualBase64Data).length) >= originalFileSizeInLogic), 
-                 data: actualBase64Data
+                 last: ((currentOffset + chunkDataAsArrayBuffer.byteLength) >= originalFileSizeInLogic)
+                 // 'data' field is removed, actual data sent as binary separately
              };
-             const chunkString = JSON.stringify(chunkMessage);
+             const metaString = JSON.stringify(chunkMetaMessage);
 
-             if (!broadcastMessage(chunkString) && retryCount < 3) {
-              throw new Error(`Failed to send chunk ${currentChunkIndex} to any peer.`);
+             // 1. Send metadata for the chunk
+             if (!broadcastMessage(metaString)) {
+                 if (retryCount < 3) throw new Error(`Failed to send chunk meta ${currentChunkIndex} to any peer.`);
+                 else {
+                    console.error(`Failed to send chunk meta ${currentChunkIndex} after multiple retries.`);
+                    throw new Error(`Failed to send chunk meta ${currentChunkIndex} after multiple retries.`);
+                 }
+             }
+             
+             // Add a small delay before sending binary data to ensure metadata is processed first on receiver
+             // This is for testing/diagnosis. Remove for production if not needed.
+             setTimeout(() => {
+                // 2. Send actual chunk data as binary
+                if (!broadcastBinaryData(chunkDataAsArrayBuffer)) {
+                    if (retryCount < 3) throw new Error(`Failed to send chunk data ${currentChunkIndex} to any peer.`);
+                 else {
+                    console.error(`Failed to send chunk data ${currentChunkIndex} after multiple retries.`);
+                    throw new Error(`Failed to send chunk data ${currentChunkIndex} after multiple retries.`);
+                 }
              }
 
-             const newOffset = currentOffset + atob(actualBase64Data).length;
+             const newOffset = currentOffset + chunkDataAsArrayBuffer.byteLength;
 
              const progress = Math.round((newOffset / originalFileSizeInLogic) * 100);
              if (fileTransferStatusElement) fileTransferStatusElement.textContent = `Sending ${originalFileName}... ${progress}%`;
@@ -1327,18 +1371,22 @@ function handleSendFile() {
              if (newOffset < originalFileSizeInLogic) {
                 offset = newOffset;
                  chunkIndex++;
-                 setTimeout(() => readSlice(newOffset), 0);
+                 // Schedule the next read/send after a short delay or based on buffer
+                 // The next readSlice will trigger the next sendFileChunk
+                 setTimeout(() => readSlice(newOffset), 0); // Or maybe a slightly longer delay?
              } else {
                  console.log(`File ${originalFileName} sent successfully.`);
                  if (fileTransferStatusElement) fileTransferStatusElement.innerHTML = DOMPurify.sanitize(`Sent ${originalFileName}`);
                  if(fileInputElement) fileInputElement.value = '';
                  sendFileButton.disabled = false;
              }
-         } catch (error) {
+            }, 10); // Small delay, e.g., 10ms
+        } catch (error) { // This catch block handles errors from broadcastMessage or the initial setup inside try
              console.error(`Error sending chunk ${currentChunkIndex}:`, error);
              if (retryCount < 3) {
                  console.log(`Retrying chunk ${currentChunkIndex} (attempt ${retryCount + 1})...`);
-                 +                 setTimeout(() => sendFileChunk(chunkData, originalFileName, originalFileSizeInLogic, currentFileId, currentChunkIndex, currentOffset, retryCount + 1), 1000); 
+                 // Retry the whole chunk (meta + data) after a delay
+                 setTimeout(() => sendFileChunk(chunkDataAsArrayBuffer, originalFileName, originalFileSizeInLogic, currentFileId, currentChunkIndex, currentOffset, retryCount + 1), 1000 * (retryCount + 1));
              } else {
                  alert(`Failed to send chunk ${currentChunkIndex} after multiple retries.`);
                  if (fileTransferStatusElement) fileTransferStatusElement.innerHTML = DOMPurify.sanitize('Chunk send error');
@@ -1346,7 +1394,7 @@ function handleSendFile() {
              }
          }
     }
-    readSlice(0);
+    readSlice(0); // Start the first chunk read
 }
 
 async function toggleVideoCall() {
@@ -1394,7 +1442,6 @@ async function toggleVideoCall() {
         localStream.getTracks().forEach(track => track.stop());
         const tracksToRemove = localStream.getTracks();
         localStream = null;
-
         const renegotiationPromises = Object.entries(peers).map(async ([peerUUID, peer]) => {
             console.log(`[toggleVideoCall END] Processing peer: ${peerUUID}, State: ${peer?.connectionState}`);
             if (peer) {
