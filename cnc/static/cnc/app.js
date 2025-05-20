@@ -24,31 +24,31 @@ let currentCallerId = null;
 let friendListElement;
 let pendingConnectionFriendId = null;
 let receivedSize = {};
-let incomingFileInfo = {}; // ← ここで定義されているはず
-let lastReceivedFileChunkMeta = {}; // { [peerUUID]: metadata } Stores metadata for the next expected binary file chunk
+let incomingFileInfo = {};
+let lastReceivedFileChunkMeta = {};
 
 
-let onlineFriendsCache = new Set(); // オンラインの友達IDをキャッシュ
-let autoConnectFriendsTimer = null; // 定期接続試行タイマー
-const AUTO_CONNECT_INTERVAL = 2000; // 友達への自動接続試行の間隔 (2秒)
+let onlineFriendsCache = new Set();
+let autoConnectFriendsTimer = null;
+const AUTO_CONNECT_INTERVAL = 2000;
 
 let peerReconnectInfo = {};
+let iceCandidateQueue = {};
 const MAX_PEER_RECONNECT_ATTEMPTS = 3;
 const INITIAL_PEER_RECONNECT_DELAY_MS = 3000;
 
 let wsReconnectAttempts = 0;
-const MAX_WS_RECONNECT_ATTEMPTS = 5; // Max number of reconnect attempts
-const INITIAL_WS_RECONNECT_DELAY_MS = 2000; // Initial delay in ms
-const MAX_WS_RECONNECT_DELAY_MS = 30000;    // Max delay in ms
+const MAX_WS_RECONNECT_ATTEMPTS = 5;
+const INITIAL_WS_RECONNECT_DELAY_MS = 2000;
+const MAX_WS_RECONNECT_DELAY_MS = 30000;
 let wsReconnectTimer = null;
-let isAttemptingReconnect = false; // Flag to indicate if a reconnect attempt is active
-
+let isAttemptingReconnect = false;
 const CHUNK_SIZE = 16384;
 let fileReader;
 
 
 const DB_NAME = 'cybernetcall-db';
-const DB_VERSION = 3; // Version up for new store
+const DB_VERSION = 3;
 
 let dbPromise = typeof idb !== 'undefined' ? idb.openDB(DB_NAME, DB_VERSION, {
   upgrade(db, oldVersion) {
@@ -284,7 +284,7 @@ async function connectWebSocket() {
 
   signalingSocket.onopen = () => {
     console.log(`WebSocket connected (Attempt: ${wsReconnectAttempts + 1})`);
-    wsReconnectAttempts = 0; // Reset on successful connection
+    wsReconnectAttempts = 0;
     isAttemptingReconnect = false;
     if (wsReconnectTimer) {
       clearTimeout(wsReconnectTimer);
@@ -335,18 +335,18 @@ async function connectWebSocket() {
         case 'user_joined':
         case 'user_online':
             const joinedUUID = message.uuid;
-            if (joinedUUID && joinedUUID !== myDeviceId) { // user_onlineでも友達なら接続試行の対象に
+            if (joinedUUID && joinedUUID !== myDeviceId) {
                 await displayFriendList();
 
                 console.log(`[user_joined] Received user_joined for ${joinedUUID}. My current ID: ${myDeviceId}. Checking if friend...`);
                 const friendExists = await isFriend(joinedUUID);
                 if (friendExists) {
                     console.log(`Friend ${joinedUUID} joined the room.`);
-                    onlineFriendsCache.add(joinedUUID); // オンラインキャッシュに追加
+                    onlineFriendsCache.add(joinedUUID);
                     console.log(`[user_joined] ${joinedUUID} IS a friend. Attempting auto-connect.`);
                     if (peers[joinedUUID]) {
 
-                        // 既に接続処理が進行中 (connecting) の場合は、重複してオファーを作成しない
+
                         if (peers[joinedUUID].connectionState === 'connecting') {
                           console.log(`Already attempting to connect to friend ${joinedUUID}, skipping duplicate auto-connect on user_joined.`);
                           return;
@@ -358,9 +358,9 @@ async function connectWebSocket() {
                         } else {
 
                             console.log(`Friend ${joinedUUID} re-joined or connection was in state ${currentState}. Closing old connection and re-attempting.`);
-                            closePeerConnection(joinedUUID); // 古い接続を閉じる
+                            closePeerConnection(joinedUUID);
                             console.log(`Auto-connecting to re-joined friend: ${joinedUUID}`);
-                            await createOfferForPeer(joinedUUID); // 新しい接続を開始
+                            await createOfferForPeer(joinedUUID);
                         }
                     } else {
 
@@ -377,7 +377,7 @@ async function connectWebSocket() {
             const leftUUID = message.uuid;
              if (leftUUID && leftUUID !== myDeviceId) {
                 console.log(`Peer ${leftUUID} left.`);
-                onlineFriendsCache.delete(leftUUID); // オンラインキャッシュから削除
+                onlineFriendsCache.delete(leftUUID);
                 console.log(`[Cache] Friend ${leftUUID} removed from online cache.`);    
                 updateStatus(`Peer ${leftUUID.substring(0,6)} left`, 'orange');
                 closePeerConnection(leftUUID);
@@ -437,7 +437,7 @@ async function connectWebSocket() {
     const reason = event.reason;
     console.log(`WebSocket disconnected: Code=${code}, Reason='${reason}', Current Attempts=${wsReconnectAttempts}`);
 
-    const socketInstanceThatClosed = event.target; // The WebSocket instance that fired this event
+    const socketInstanceThatClosed = event.target;
 
 
     if (socketInstanceThatClosed) {
@@ -457,20 +457,20 @@ async function connectWebSocket() {
     if (code === 1000 || code === 1001) {
         console.log("WebSocket closed normally or going away. No reconnection attempt.");
         updateStatus('Signaling connection closed.', 'orange');
-        resetConnection(); // Full reset of application state
+        resetConnection();
         await displayFriendList();
-        isAttemptingReconnect = false; // Ensure flag is reset
-        wsReconnectAttempts = 0; // Reset attempts for future manual connections
+        isAttemptingReconnect = false;
+        wsReconnectAttempts = 0;
         return;
       }
   
       if (wsReconnectAttempts >= MAX_WS_RECONNECT_ATTEMPTS) {
         console.error('WebSocket reconnection failed after maximum attempts.');
         updateStatus('Signaling connection lost. Please refresh the page.', 'red');
-        resetConnection(); // Full reset
+        resetConnection();
         await displayFriendList();
         isAttemptingReconnect = false;
-        wsReconnectAttempts = 0; // Reset for next time
+        wsReconnectAttempts = 0;
         return;
       }
   
@@ -488,12 +488,12 @@ async function connectWebSocket() {
       Object.values(dataChannels).forEach(channel => { if (channel && channel.readyState !== 'closed') channel.close(); });
       dataChannels = {};
       setInteractionUiEnabled(false);
-      currentAppState = AppState.CONNECTING; // Indicate attempt to connect to signaling
+      currentAppState = AppState.CONNECTING;
   
       if (wsReconnectTimer) clearTimeout(wsReconnectTimer);
       wsReconnectTimer = setTimeout(async () => {
         console.log(`Executing reconnect attempt #${wsReconnectAttempts}...`);
-        await connectWebSocket(); // Attempt to establish a new WebSocket connection
+        await connectWebSocket();
       }, delay);
   };
 
@@ -571,7 +571,7 @@ async function attemptAutoConnectToFriends() {
           if (onlineFriendsCache.has(friend.id) && !isPeerConnectedOrConnecting && !isPeerUnderIndividualReconnect) {
               console.log(`[Auto Connect] Online friend ${friend.id.substring(0,6)} is not connected. Attempting to connect.`);
               updateStatus(`Auto-connecting to ${friend.id.substring(0,6)}...`, 'blue');
-              await createOfferForPeer(friend.id, true); // isReconnectAttempt = true
+              await createOfferForPeer(friend.id, true);
           }
       }
   } catch (error) {
@@ -584,6 +584,7 @@ async function createPeerConnection(peerUUID) {
     console.warn(`Closing existing PeerConnection for ${peerUUID}.`);
     closePeerConnection(peerUUID);
   }
+  iceCandidateQueue[peerUUID] = [];
   console.log(`Creating PeerConnection for ${peerUUID}...`);
   try {
     const peer = new RTCPeerConnection({
@@ -754,6 +755,7 @@ async function handleOfferAndCreateAnswer(peerUUID, offerSdp) {
   if (!isRenegotiation) {
 
     console.log(`No existing PeerConnection for ${peerUUID}. Creating one...`);
+    iceCandidateQueue[peerUUID] = []; 
     peer = await createPeerConnection(peerUUID);
     if (!peer) {
         console.error(`Failed to create PeerConnection for ${peerUUID} to handle offer.`);
@@ -769,6 +771,7 @@ async function handleOfferAndCreateAnswer(peerUUID, offerSdp) {
   console.log(`Received offer from ${peerUUID}, setting remote description...`);
   try {
     await peer.setRemoteDescription(new RTCSessionDescription(offerSdp));
+    await processIceCandidateQueue(peerUUID); // Process any queued candidates    
 
     if (localStream) {
         localStream.getTracks().forEach(track => {
@@ -810,6 +813,7 @@ async function handleAnswer(peerUUID, answerSdp) {
   try {
     await peer.setRemoteDescription(new RTCSessionDescription(answerSdp));
     console.log(`Remote description set with answer for ${peerUUID}. Connection should establish soon.`);
+    await processIceCandidateQueue(peerUUID);
     return true;
   } catch (error) {
     console.error(`Error setting remote description with answer for ${peerUUID}:`, error);
@@ -818,20 +822,47 @@ async function handleAnswer(peerUUID, answerSdp) {
   }
 }
 
-async function handleIceCandidate(peerUUID, candidate) {
-  const peer = peers[peerUUID];
-  if (!peer) {
-    return;
-  }
-  if (candidate) {
+async function handleIceCandidate(peerUUID, candidateData) {
     try {
-      await peer.addIceCandidate(new RTCIceCandidate(candidate));
+        const peer = peers[peerUUID];
+        if (!peer) {
+            console.warn(`[handleIceCandidate] Received ICE candidate for unknown or closed peer ${peerUUID}. Queueing just in case.`);
+            if (!iceCandidateQueue[peerUUID]) {
+                iceCandidateQueue[peerUUID] = [];
+            }
+            iceCandidateQueue[peerUUID].push(candidateData);
+            return;
+        }
+
+        if (candidateData) {
+            if (peer.remoteDescription) {
+                await peer.addIceCandidate(new RTCIceCandidate(candidateData));
+            } else {
+                console.log(`[handleIceCandidate] remoteDescription not set for ${peerUUID}. Queuing ICE candidate.`);
+                if (!iceCandidateQueue[peerUUID]) {
+                    iceCandidateQueue[peerUUID] = [];
+                }
+                iceCandidateQueue[peerUUID].push(candidateData);
+            }
+        }
     } catch (error) {
-      if (!error.message.includes("Cannot add ICE candidate in state") && !error.message.includes("Error processing ICE candidate")) {
-          console.error(`Error adding received ICE candidate for ${peerUUID}:`, error);
-      }
+        console.error(`Error adding received ICE candidate for ${peerUUID}:`, error);
     }
-  }
+}
+
+async function processIceCandidateQueue(peerUUID) {
+    const peer = peers[peerUUID];
+    if (peer && peer.remoteDescription && iceCandidateQueue[peerUUID]) {
+        console.log(`[processIceCandidateQueue] Processing ${iceCandidateQueue[peerUUID].length} queued ICE candidates for ${peerUUID}`);
+        while (iceCandidateQueue[peerUUID].length > 0) {
+            const candidate = iceCandidateQueue[peerUUID].shift();
+            try {
+                await peer.addIceCandidate(new RTCIceCandidate(candidate));
+            } catch (e) {
+                console.error(`[processIceCandidateQueue] Error adding queued ICE candidate for ${peerUUID}:`, e);
+            }
+        }
+    }
 }
 
 function resetConnection() {
@@ -924,6 +955,7 @@ function closePeerConnection(peerUUID) {
         peer.onconnectionstatechange = null;
         peer.close();
         delete peers[peerUUID];
+        delete iceCandidateQueue[peerUUID];
     }
     const channel = dataChannels[peerUUID];
     if (channel) {
@@ -942,20 +974,15 @@ function closePeerConnection(peerUUID) {
 
 function handleDataChannelMessage(event, senderUUID) {
   if (event.data instanceof ArrayBuffer) {
-    // This is expected to be a binary file chunk
+
     if (lastReceivedFileChunkMeta[senderUUID]) {
         const meta = lastReceivedFileChunkMeta[senderUUID];
-        // Pass the metadata and the ArrayBuffer data to processFileChunk
-        processFileChunk(meta, event.data); // event.data is the ArrayBuffer
-        lastReceivedFileChunkMeta[senderUUID] = null; // Consume the metadata
+
+        processFileChunk(meta, event.data);
+        lastReceivedFileChunkMeta[senderUUID] = null;
       } else {
         console.warn(`Received ArrayBuffer from ${senderUUID} without preceding file-chunk metadata. Discarding.`);
-        // Optionally, try to decode as text if some fallback is desired, but this should ideally not happen.
-        // try {
-        //   processTextMessage(new TextDecoder().decode(event.data), senderUUID);
-        // } catch (e) {
-        //   console.error("Failed to decode unexpected ArrayBuffer as text.", e);
-        // }
+
     }
   } else if (typeof event.data === 'string') {
     processTextMessage(event.data, senderUUID);
@@ -969,7 +996,7 @@ async function processTextMessage(dataString, senderUUID) {
         console.log(`[Receiver processTextMessage] Raw string data from ${senderUUID}:`, dataString.substring(0, 200) + (dataString.length > 200 ? '...' : ''));
         const message = JSON.parse(dataString);
         console.log(`[Receiver processTextMessage] Parsed message from ${senderUUID}:`, JSON.parse(JSON.stringify(message))); // Deep copy for logging
-        switch (message.type) { // Ensure this matches exactly what sender sends for file-metadata
+        switch (message.type) {
             case 'post':
                 message.sender = message.sender || senderUUID;
                 await savePost(message);
@@ -1003,7 +1030,7 @@ async function processTextMessage(dataString, senderUUID) {
                 }
                 break;
             case 'file-chunk':
-                // This is now metadata for an upcoming binary chunk
+
                 lastReceivedFileChunkMeta[senderUUID] = { ...message, senderUUID }; // Store it, associate with sender
                 console.log(`[Receiver processTextMessage] 'file-chunk' case: Stored chunk-meta for ${message.fileId}, chunk ${message.index} from ${senderUUID}.`);
                 break;
@@ -1030,10 +1057,10 @@ async function processFileChunk(chunkMeta, chunkDataAsArrayBuffer) {
     }
     let db;
     try {
-        // chunkDataAsArrayBuffer is already an ArrayBuffer
+
         if (!(chunkDataAsArrayBuffer instanceof ArrayBuffer)) {
             console.error(`processFileChunk called with non-ArrayBuffer data for file ${fileId} from ${senderUUID}`, chunkDataAsArrayBuffer);
-            await cleanupFileTransferData(fileId, null); // Attempt cleanup even if db not opened yet
+            await cleanupFileTransferData(fileId, null);
             return;
         }
 
@@ -1104,7 +1131,7 @@ async function processFileChunk(chunkMeta, chunkDataAsArrayBuffer) {
             } else {
                 messageAreaElement.appendChild(downloadLink);
             }
-            await cleanupFileTransferData(fileId, db, true); // true for transferComplete
+            await cleanupFileTransferData(fileId, db, true);
         }
     } catch (error) { 
 
@@ -1295,12 +1322,12 @@ function handleSendFile() {
         sendFileButton.disabled = false;
     });
     fileReader.addEventListener('load', e => {
-        const chunkArrayBuffer = e.target.result; // This is an ArrayBuffer
+        const chunkArrayBuffer = e.target.result;
 
         if (openChannels.length > 0) {
             const firstChannel = openChannels[0][1];
             const bufferedAmount = firstChannel.bufferedAmount || 0;
-            // Adjust buffer threshold as needed, e.g., 1MB or 16 chunks
+
             if (bufferedAmount > CHUNK_SIZE * 16) { 
                 console.warn(`DataChannel buffer high (${bufferedAmount}), pausing send...`);
                 setTimeout(() => {
@@ -1321,7 +1348,7 @@ function handleSendFile() {
         try {
             const end = Math.min(o + CHUNK_SIZE, snapshottedFileSize);
             const slice = file.slice(o, end);
-            fileReader.readAsArrayBuffer(slice); // Read as ArrayBuffer
+            fileReader.readAsArrayBuffer(slice);
         } catch (readError) {
              console.error('Error reading file slice:', readError);
              alert('Failed to read file slice.');
@@ -1338,11 +1365,11 @@ function handleSendFile() {
                  fileId: currentFileId,
                  index: currentChunkIndex,
                  last: ((currentOffset + chunkDataAsArrayBuffer.byteLength) >= originalFileSizeInLogic)
-                 // 'data' field is removed, actual data sent as binary separately
+
              };
              const metaString = JSON.stringify(chunkMetaMessage);
 
-             // 1. Send metadata for the chunk
+
              if (!broadcastMessage(metaString)) {
                  if (retryCount < 3) throw new Error(`Failed to send chunk meta ${currentChunkIndex} to any peer.`);
                  else {
@@ -1351,10 +1378,9 @@ function handleSendFile() {
                  }
              }
              
-             // Add a small delay before sending binary data to ensure metadata is processed first on receiver
-             // This is for testing/diagnosis. Remove for production if not needed.
+
              setTimeout(() => {
-                // 2. Send actual chunk data as binary
+
                 if (!broadcastBinaryData(chunkDataAsArrayBuffer)) {
                     if (retryCount < 3) throw new Error(`Failed to send chunk data ${currentChunkIndex} to any peer.`);
                  else {
@@ -1371,17 +1397,16 @@ function handleSendFile() {
              if (newOffset < originalFileSizeInLogic) {
                 offset = newOffset;
                  chunkIndex++;
-                 // Schedule the next read/send after a short delay or based on buffer
-                 // The next readSlice will trigger the next sendFileChunk
-                 setTimeout(() => readSlice(newOffset), 0); // Or maybe a slightly longer delay?
+
+                 setTimeout(() => readSlice(newOffset), 0);
              } else {
                  console.log(`File ${originalFileName} sent successfully.`);
                  if (fileTransferStatusElement) fileTransferStatusElement.innerHTML = DOMPurify.sanitize(`Sent ${originalFileName}`);
                  if(fileInputElement) fileInputElement.value = '';
                  sendFileButton.disabled = false;
              }
-            }, 10); // Small delay, e.g., 10ms
-        } catch (error) { // This catch block handles errors from broadcastMessage or the initial setup inside try
+            }, 10);
+        } catch (error) {
              console.error(`Error sending chunk ${currentChunkIndex}:`, error);
              if (retryCount < 3) {
                  console.log(`Retrying chunk ${currentChunkIndex} (attempt ${retryCount + 1})...`);
@@ -1394,7 +1419,7 @@ function handleSendFile() {
              }
          }
     }
-    readSlice(0); // Start the first chunk read
+    readSlice(0);
 }
 
 async function toggleVideoCall() {
@@ -1776,30 +1801,29 @@ function setupEventListeners() {
     document.addEventListener('visibilitychange', () => {
         if (document.visibilityState === 'visible') {
           console.log('App became visible. Checking WebSocket connection.');
-          // isAttemptingReconnect フラグも考慮して、既存の再接続処理と競合しないようにする
+
           if ((!signalingSocket || signalingSocket.readyState !== WebSocket.OPEN) && !isAttemptingReconnect) {
             console.log('WebSocket not connected or in a bad state upon visibility change. Attempting to reconnect.');
             updateStatus('Re-checking connection...', 'blue');
-            // 既存の再接続ロジックを尊重しつつ、再接続を促す
-            // 既にタイマーが動いている場合はそれをクリアし、試行回数をリセットして最初から試みる
+
             if (wsReconnectTimer) {
               clearTimeout(wsReconnectTimer);
               wsReconnectTimer = null;
             }
-            wsReconnectAttempts = 0; // 新規の再接続シーケンスとして扱う
-            // isAttemptingReconnect は connectWebSocket 内で true に設定される
+            wsReconnectAttempts = 0;
+
             connectWebSocket();
           } else if (signalingSocket && signalingSocket.readyState === WebSocket.OPEN) {
             console.log('WebSocket is connected upon visibility change.');
-            // WebSocketが接続されていれば、友達への自動接続タイマーを開始/再開
+
             startAutoConnectFriendsTimer();
           } else if (isAttemptingReconnect) {
             console.log('WebSocket reconnection attempt already in progress upon visibility change.');
           }
         } else {
           console.log('App became hidden.');
-          // アプリが非表示になったら、友達への自動接続タイマーを停止
-          // stopAutoConnectFriendsTimer();
+
+          stopAutoConnectFriendsTimer();
         }
       });
 
@@ -1876,20 +1900,19 @@ document.addEventListener('DOMContentLoaded', async () => {
         registration.onupdatefound = () => {
           const installingWorker = registration.installing;
           if (installingWorker) {
-                let refreshing; // リロード処理の重複実行を防ぐフラグ        
+                let refreshing;    
             installingWorker.onstatechange = () => {
               if (installingWorker.state === 'installed') {
                 if (navigator.serviceWorker.controller) {
-                     // 新しいコンテンツが利用可能で、現在のページは古いSWによって制御されている
+
                      console.log('New content is available and has been installed. Please refresh to update.');
-                     // ユーザーに更新を促すシンプルなconfirmダイアログ
+
                      if (confirm('A new version of the app is available. Refresh now to get the latest features?')) {
-                       // 新しいService Workerが待機状態(waiting)の場合、skipWaitingを指示して即座にアクティベートさせる
-                       // (ただし、installイベントで既にself.skipWaiting()を呼んでいるので、通常は不要かもしれない)
+
                        if (registration.waiting) {
                            registration.waiting.postMessage({ type: 'SKIP_WAITING' });
                        }
-                       // controllerchangeイベントを監視し、新しいSWが制御を開始したらリロード
+
                        navigator.serviceWorker.addEventListener('controllerchange', () => {
                            if (refreshing) return;
                            window.location.reload();
@@ -1899,7 +1922,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                        updateStatus('New version available. Please refresh soon to update.', 'blue');
                      }
                 } else {
-                     // 初めてService Workerが登録され、コンテンツがキャッシュされた場合
+
                     console.log('Content is cached for offline use.');
                 }
               }
@@ -1916,19 +1939,18 @@ document.addEventListener('DOMContentLoaded', async () => {
     updateStatus('Offline features unavailable (Service Worker not supported)', 'orange');
   }
 
-  // Listen for messages from the Service Worker
+
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.addEventListener('message', event => {
       console.log('[App.js] Message received from Service Worker:', event.data);
       if (event.data && event.data.type === 'APP_ACTIVATED') {
         console.log('[App.js] App activated message from SW. New SW:', event.data.newSW);
-        // This is a good place to re-check WebSocket connection
-        // and attempt to connect to online friends, especially if a new SW took control.
+
         if ((!signalingSocket || signalingSocket.readyState !== WebSocket.OPEN) && !isAttemptingReconnect) {
             console.log('[App.js SW Message] WebSocket not connected. Attempting to reconnect.');
-            connectWebSocket(); // Ensure wsReconnectAttempts is reset if appropriate
+            connectWebSocket();
         }
-        startAutoConnectFriendsTimer(); // Start/restart friend connection attempts
+        startAutoConnectFriendsTimer();
       }
     });
   }
@@ -1946,3 +1968,4 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
 });
+
