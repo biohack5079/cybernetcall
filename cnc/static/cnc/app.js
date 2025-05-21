@@ -123,7 +123,7 @@ async function addFriend(friendId, friendName = null) {
     const existing = await tx.store.get(friendId);
     if (existing) {
         console.log(`Friend ${friendId} already exists.`);
-        updateStatus(`Friend (${friendId.substring(0,6)}) is already added.`, 'gray');
+        updateStatus(`Friend (${friendId.substring(0,6)}) is already added.`, 'orange');
         return;
     }
     await tx.store.put({ id: friendId, name: friendName, added: new Date() });
@@ -321,6 +321,7 @@ async function connectWebSocket() {
                     }
                 } else {
                     console.log(`[user_joined] Peer ${joinedUUID} joined, but is NOT a friend. No auto-connection.`);
+                    updateStatus(`Peer ${joinedUUID.substring(0,6)} joined (NOT a friend).`, 'gray');
                 }
             }
             break;
