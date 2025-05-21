@@ -3,6 +3,7 @@ let localStream;
 let peers = {};
 let dataChannels = {};
 let signalingSocket = null;
+
 const AppState = {
   INITIAL: 'initial',
   CONNECTING: 'connecting',
@@ -10,6 +11,7 @@ const AppState = {
   ERROR: 'error'
 };
 let currentAppState = AppState.INITIAL;
+
 let qrElement, statusElement, qrReaderElement, qrResultsElement, localVideoElement, remoteVideoElement, messageAreaElement, postAreaElement;
 let messageInputElement, sendMessageButton, postInputElement, sendPostButton;
 let fileInputElement, sendFileButton, fileTransferStatusElement;
@@ -18,33 +20,36 @@ let startScanButton;
 let roomInputElement, joinRoomButton;
 let remoteVideosContainer;
 let incomingCallModal, callerIdElement, acceptCallButton, rejectCallButton;
-let addFriendConfirmModal, confirmFriendIdTextElement, confirmAddFriendButton, ignoreAddFriendButton;
 let currentCallerId = null;
 let friendListElement;
 let pendingConnectionFriendId = null;
-let pendingOfferDetails = null;
 let receivedSize = {};
 let incomingFileInfo = {};
 let lastReceivedFileChunkMeta = {};
+
+
 let onlineFriendsCache = new Set();
 let autoConnectFriendsTimer = null;
 const AUTO_CONNECT_INTERVAL = 2000;
+
 let peerReconnectInfo = {};
 let iceCandidateQueue = {};
 const MAX_PEER_RECONNECT_ATTEMPTS = 3;
-const INITIAL_PEER_RECONNECT_DELAY_MS = 2000;
-let peerNegotiationTimers = {};
-const NEGOTIATION_TIMEOUT_MS = 3000;
+const INITIAL_PEER_RECONNECT_DELAY_MS = 3000;
+
 let wsReconnectAttempts = 0;
 const MAX_WS_RECONNECT_ATTEMPTS = 5;
 const INITIAL_WS_RECONNECT_DELAY_MS = 2000;
-const MAX_WS_RECONNECT_DELAY_MS = 5000;
+const MAX_WS_RECONNECT_DELAY_MS = 30000;
 let wsReconnectTimer = null;
 let isAttemptingReconnect = false;
 const CHUNK_SIZE = 16384;
 let fileReader;
+
+
 const DB_NAME = 'cybernetcall-db';
 const DB_VERSION = 3;
+
 let dbPromise = typeof idb !== 'undefined' ? idb.openDB(DB_NAME, DB_VERSION, {
   upgrade(db, oldVersion) {
     if (!db.objectStoreNames.contains('posts')) {
@@ -59,15 +64,18 @@ let dbPromise = typeof idb !== 'undefined' ? idb.openDB(DB_NAME, DB_VERSION, {
     }
   }
 }) : null;
+
 if (!dbPromise) {
     console.error("idb library not loaded. IndexedDB features will be unavailable.");
 }
+
 function generateUUID() {
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
     let r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
     return v.toString(16);
   });
 }
+
 function updateStatus(message, color = 'black') {
     if (statusElement) {
         statusElement.textContent = message;
@@ -76,6 +84,7 @@ function updateStatus(message, color = 'black') {
     }
     console.log(`Status Update: ${message} (State: ${currentAppState})`);
 }
+
 function setInteractionUiEnabled(enabled) {
     const disabled = !enabled;
     if (messageInputElement) messageInputElement.disabled = disabled;
@@ -89,6 +98,7 @@ function setInteractionUiEnabled(enabled) {
     if (joinRoomButton) joinRoomButton.disabled = (currentAppState !== AppState.INITIAL);
     console.log(`Interaction UI (Chat, File, Call, Scan) ${enabled ? 'enabled' : 'disabled'}.`);
 }
+
 async function savePost(post) {
   if (!dbPromise) return;
   try {
@@ -101,6 +111,7 @@ async function savePost(post) {
     console.error("Error saving post:", error);
   }
 }
+
 async function deletePostFromDb(postId) {
   if (!dbPromise) return;
   try {
@@ -113,6 +124,7 @@ async function deletePostFromDb(postId) {
     console.error("Error deleting post from DB:", postId, error);
   }
 }
+
 async function addFriend(friendId, friendName = null) {
   if (!dbPromise || !friendId) return;
   if (friendId === myDeviceId) {
@@ -125,31 +137,36 @@ async function addFriend(friendId, friendName = null) {
     const existing = await tx.store.get(friendId);
     if (existing) {
         console.log(`Friend ${friendId} already exists.`);
-        updateStatus(`Friend (${friendId.substring(0,6)}) is already added.`, 'orange');
+        alert(`Friend (${friendId.substring(0,6)}) is already added.`);
         return;
     }
     await tx.store.put({ id: friendId, name: friendName, added: new Date() });
     await tx.done;
     console.log("Friend added:", friendId);
-    updateStatus(`Friend (${friendId.substring(0,6)}) added successfully!`, 'green');
+    alert(`Friend (${friendId.substring(0,6)}) added successfully! Attempting to connect...`);
     await displayFriendList();
   } catch (error) {
     console.error("Error adding friend:", error);
-    updateStatus("Failed to add friend.", 'red');
+    alert("Failed to add friend.");
   }
 }
+
 async function isFriend(friendId, dbInstance = null) {
   if (!dbPromise || !friendId) return false;
   try {
+
     const db = dbInstance || await dbPromise;
     const friend = await db.get('friends', friendId);
+
     console.log(`[isFriend] Result for ${friendId}:`, friend ? {...friend} : null, `Is friend: ${!!friend}`);
-    return !!friend;
+    return !!friend; 
   } catch (error) {
+
     console.error(`[isFriend] Error checking if ${friendId} exists:`, error);
     return false;
   }
 }
+
 async function displayFriendList() {
   if (!dbPromise || !friendListElement) return;
   try {
@@ -165,6 +182,7 @@ async function displayFriendList() {
     console.error("Error displaying friend list:", error);
   }
 }
+
 async function displayInitialPosts() {
   if (!dbPromise || !postAreaElement) return;
   try {
@@ -178,14 +196,17 @@ async function displayInitialPosts() {
     console.error("Error displaying initial posts:", error);
   }
 }
+
 function displayPost(post, isNew = true) {
   if (!postAreaElement) return;
   const div = document.createElement('div');
   div.className = 'post';
   div.id = `post-${post.id}`;
+
   const contentSpan = document.createElement('span');
   const unsafeHTML = `<strong>${post.sender ? post.sender.substring(0, 6) : 'Unknown'}:</strong> ${post.content}`;
   contentSpan.innerHTML = DOMPurify.sanitize(unsafeHTML);
+
   const deleteButton = document.createElement('button');
   deleteButton.textContent = '❌';
   deleteButton.className = 'delete-post-button';
@@ -196,56 +217,71 @@ function displayPost(post, isNew = true) {
   deleteButton.style.background = 'none';
   deleteButton.ariaLabel = 'Delete post';
   deleteButton.addEventListener('click', handleDeletePost);
+
   div.appendChild(contentSpan);
   div.appendChild(deleteButton);
+
   if (isNew && postAreaElement.firstChild) {
       postAreaElement.insertBefore(div, postAreaElement.firstChild);
   } else {
       postAreaElement.appendChild(div);
   }
 }
+
 async function handleDeletePost(event) {
     const button = event.currentTarget;
     const postId = button.dataset.postId;
     if (!postId) return;
+
     console.log("Attempting to delete post:", postId);
+
     const postElement = document.getElementById(`post-${postId}`);
     if (postElement) {
         postElement.remove();
     }
+
     await deletePostFromDb(postId);
+
     const postDeleteMessage = JSON.stringify({
         type: 'delete-post',
         postId: postId
     });
     broadcastMessage(postDeleteMessage);
 }
+
 function displaySingleFriend(friend) {
     if (!friendListElement) return;
     const div = document.createElement('div');
     div.className = 'friend-item';
     div.dataset.friendId = friend.id;
+
     const nameSpan = document.createElement('span');
     nameSpan.textContent = `ID: ${friend.id.substring(0, 8)}...`;
+
     const callFriendButton = document.createElement('button');
     callFriendButton.textContent = '📞 Call';
     callFriendButton.dataset.friendId = friend.id;
     callFriendButton.addEventListener('click', handleCallFriendClick);
     callFriendButton.disabled = !signalingSocket || signalingSocket.readyState !== WebSocket.OPEN || currentAppState === AppState.CONNECTING || currentAppState === AppState.CONNECTED;
+
     div.appendChild(nameSpan);
     div.appendChild(callFriendButton);
+
     friendListElement.appendChild(div);
 }
+
 async function connectWebSocket() {
   if (signalingSocket && signalingSocket.readyState === WebSocket.OPEN) {
     console.log('WebSocket already connected.');
     return;
   }
+
   const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   const wsUrl = `${wsProtocol}//${location.host}/ws/signaling/`;
   console.log(`Connecting to WebSocket: ${wsUrl}`);
   updateStatus('Connecting to signaling server...', 'blue');
   signalingSocket = new WebSocket(wsUrl);
+
   signalingSocket.onopen = () => {
     console.log(`WebSocket connected (Attempt: ${wsReconnectAttempts + 1})`);
     wsReconnectAttempts = 0;
@@ -259,14 +295,18 @@ async function connectWebSocket() {
       type: 'register',
       payload: { uuid: myDeviceId }
     });
+
   };
+
   signalingSocket.onmessage = async (event) => {
     try {
       const message = JSON.parse(event.data);
       const messageType = message.type;
       const payload = message.payload || {};
       const senderUUID = message.from || message.uuid || payload.uuid;
+
       console.log('Received signaling message:', message);
+
       switch (messageType) {
         case 'registered':
             updateStatus('Connected to signaling server. Ready.', 'green');
@@ -290,13 +330,14 @@ async function connectWebSocket() {
                     }
                 }
             }
-            console.log('[Cache] Initial online friends:', Array.from(onlineFriendsCache));
+            console.log('[Cache] Initial online friends:', Array.from(onlineFriendsCache));            
             break;
         case 'user_joined':
         case 'user_online':
             const joinedUUID = message.uuid;
             if (joinedUUID && joinedUUID !== myDeviceId) {
                 await displayFriendList();
+
                 console.log(`[user_joined] Received user_joined for ${joinedUUID}. My current ID: ${myDeviceId}. Checking if friend...`);
                 const friendExists = await isFriend(joinedUUID);
                 if (friendExists) {
@@ -304,20 +345,25 @@ async function connectWebSocket() {
                     onlineFriendsCache.add(joinedUUID);
                     console.log(`[user_joined] ${joinedUUID} IS a friend. Attempting auto-connect.`);
                     if (peers[joinedUUID]) {
+
+
                         if (peers[joinedUUID].connectionState === 'connecting') {
                           console.log(`Already attempting to connect to friend ${joinedUUID}, skipping duplicate auto-connect on user_joined.`);
                           return;
                       }
+                      
                         const currentState = peers[joinedUUID].connectionState;
                         if (currentState === 'connected' || currentState === 'connecting') {
                             console.log(`Already connected or connecting to friend ${joinedUUID} (state: ${currentState}), skipping auto-connect.`);
                         } else {
+
                             console.log(`Friend ${joinedUUID} re-joined or connection was in state ${currentState}. Closing old connection and re-attempting.`);
                             closePeerConnection(joinedUUID);
                             console.log(`Auto-connecting to re-joined friend: ${joinedUUID}`);
                             await createOfferForPeer(joinedUUID);
                         }
                     } else {
+
                         console.log(`Auto-connecting to newly joined friend: ${joinedUUID}`);
                         await createOfferForPeer(joinedUUID);
                     }
@@ -332,7 +378,7 @@ async function connectWebSocket() {
              if (leftUUID && leftUUID !== myDeviceId) {
                 console.log(`Peer ${leftUUID} left.`);
                 onlineFriendsCache.delete(leftUUID);
-                console.log(`[Cache] Friend ${leftUUID} removed from online cache.`);
+                console.log(`[Cache] Friend ${leftUUID} removed from online cache.`);    
                 updateStatus(`Peer ${leftUUID.substring(0,6)} left`, 'orange');
                 closePeerConnection(leftUUID);
                 await displayFriendList();
@@ -385,22 +431,29 @@ async function connectWebSocket() {
       console.error('Failed to parse message or handle incoming signal:', error);
     }
   };
+
   signalingSocket.onclose = async (event) => {
     const code = event.code;
     const reason = event.reason;
     console.log(`WebSocket disconnected: Code=${code}, Reason='${reason}', Current Attempts=${wsReconnectAttempts}`);
+
     const socketInstanceThatClosed = event.target;
+
+
     if (socketInstanceThatClosed) {
         socketInstanceThatClosed.onopen = null;
         socketInstanceThatClosed.onmessage = null;
         socketInstanceThatClosed.onerror = null;
         socketInstanceThatClosed.onclose = null;
     }
+
     if (signalingSocket !== socketInstanceThatClosed && signalingSocket !== null) {
         console.warn("onclose event from an outdated socket instance. Global signalingSocket points to a newer instance. Ignoring.");
         return;
     }
+    
     signalingSocket = null;
+
     if (code === 1000 || code === 1001) {
         console.log("WebSocket closed normally or going away. No reconnection attempt.");
         updateStatus('Signaling connection closed.', 'orange');
@@ -410,6 +463,7 @@ async function connectWebSocket() {
         wsReconnectAttempts = 0;
         return;
       }
+  
       if (wsReconnectAttempts >= MAX_WS_RECONNECT_ATTEMPTS) {
         console.error('WebSocket reconnection failed after maximum attempts.');
         updateStatus('Signaling connection lost. Please refresh the page.', 'red');
@@ -419,33 +473,44 @@ async function connectWebSocket() {
         wsReconnectAttempts = 0;
         return;
       }
+  
       isAttemptingReconnect = true;
       wsReconnectAttempts++;
+  
       let delay = INITIAL_WS_RECONNECT_DELAY_MS * Math.pow(1.5, wsReconnectAttempts - 1);
       delay = Math.min(delay, MAX_WS_RECONNECT_DELAY_MS);
+  
       updateStatus(`Signaling disconnected. Reconnecting in ${Math.round(delay/1000)}s (Attempt ${wsReconnectAttempts}/${MAX_WS_RECONNECT_ATTEMPTS})...`, 'orange');
       console.log(`Scheduling WebSocket reconnect #${wsReconnectAttempts} in ${delay / 1000}s`);
+  
+
       Object.keys(peers).forEach(peerUUID => closePeerConnection(peerUUID));
       Object.values(dataChannels).forEach(channel => { if (channel && channel.readyState !== 'closed') channel.close(); });
       dataChannels = {};
       setInteractionUiEnabled(false);
       currentAppState = AppState.CONNECTING;
+  
       if (wsReconnectTimer) clearTimeout(wsReconnectTimer);
       wsReconnectTimer = setTimeout(async () => {
         console.log(`Executing reconnect attempt #${wsReconnectAttempts}...`);
         await connectWebSocket();
       }, delay);
   };
+
   signalingSocket.onerror = (error) => {
     console.error('WebSocket error:', error);
+
     if (signalingSocket && (signalingSocket.readyState === WebSocket.OPEN || signalingSocket.readyState === WebSocket.CONNECTING)) {
         console.log("WebSocket error occurred on an open/connecting socket, explicitly closing to trigger onclose for reconnection logic.");
         signalingSocket.close();
     } else if (!signalingSocket && !isAttemptingReconnect) {
+
         console.log("WebSocket error on a null socket without active reconnection. Manually invoking onclose-like behavior if needed.");
+
     }
   };
 }
+
 function sendSignalingMessage(message) {
   if (signalingSocket && signalingSocket.readyState === WebSocket.OPEN) {
     if (!message.payload) message.payload = {};
@@ -456,14 +521,17 @@ function sendSignalingMessage(message) {
     updateStatus('Signaling connection not ready.', 'red');
   }
 }
+
 function startAutoConnectFriendsTimer() {
   if (autoConnectFriendsTimer) {
+
       clearInterval(autoConnectFriendsTimer);
   }
   console.log(`[Auto Connect] Starting timer to check for online friends every ${AUTO_CONNECT_INTERVAL / 1000}s.`);
   autoConnectFriendsTimer = setInterval(attemptAutoConnectToFriends, AUTO_CONNECT_INTERVAL);
-  attemptAutoConnectToFriends();
+  attemptAutoConnectToFriends(); // 初回実行
 }
+
 function stopAutoConnectFriendsTimer() {
   if (autoConnectFriendsTimer) {
       console.log("[Auto Connect] Stopping timer.");
@@ -471,25 +539,35 @@ function stopAutoConnectFriendsTimer() {
       autoConnectFriendsTimer = null;
   }
 }
+
 async function attemptAutoConnectToFriends() {
   if (!signalingSocket || signalingSocket.readyState !== WebSocket.OPEN) {
+
       return;
   }
+
   if (currentAppState === AppState.CONNECTING && Object.keys(peers).some(id => peers[id]?.connectionState === 'connecting')) {
+
       return;
   }
+
+
   if (!dbPromise) {
       console.warn("[Auto Connect] dbPromise not available.");
       return;
   }
+
   try {
       const db = await dbPromise;
       const friends = await db.getAll('friends');
       if (friends.length === 0) return;
+      
       for (const friend of friends) {
           if (friend.id === myDeviceId) continue;
-          const isPeerConnectedOrConnecting = peers[friend.id] && (peers[friend.id].connectionState === 'connected' || peers[friend.id].connectionState === 'connecting' || peers[friend.id].connectionState === 'new');
-          const isPeerUnderIndividualReconnect = peerReconnectInfo[friend.id] && peerReconnectInfo[friend.id].isReconnecting;
+
+          const isPeerConnectedOrConnecting = peers[friend.id] && (peers[friend.id].connectionState === 'connected' || peers[friend.id].connectionState === 'connecting');
+          const isPeerUnderIndividualReconnect = peerReconnectInfo[friend.id] && peerReconnectInfo[friend.id].attempts > 0;
+
           if (onlineFriendsCache.has(friend.id) && !isPeerConnectedOrConnecting && !isPeerUnderIndividualReconnect) {
               console.log(`[Auto Connect] Online friend ${friend.id.substring(0,6)} is not connected. Attempting to connect.`);
               updateStatus(`Auto-connecting to ${friend.id.substring(0,6)}...`, 'blue');
@@ -500,104 +578,19 @@ async function attemptAutoConnectToFriends() {
       console.error("[Auto Connect] Error attempting to connect to friends:", error);
   }
 }
-async function startPeerReconnect(peerUUID) {
-    if (!peers[peerUUID] || (peerReconnectInfo[peerUUID] && peerReconnectInfo[peerUUID].isReconnecting)) {
-        console.log(`[Peer Reconnect] Skipping reconnect for ${peerUUID}: no peer object or already reconnecting.`);
-        return;
-    }
-    if (!await isFriend(peerUUID)) {
-        console.log(`[Peer Reconnect] Peer ${peerUUID} is no longer a friend. Not attempting reconnect.`);
-        closePeerConnection(peerUUID);
-        return;
-    }
-    console.log(`[Peer Reconnect] Starting reconnect process for ${peerUUID}`);
-    peerReconnectInfo[peerUUID] = {
-        attempts: 0,
-        timerId: null,
-        isReconnecting: true
-    };
-    schedulePeerReconnectAttempt(peerUUID);
-}
-function schedulePeerReconnectAttempt(peerUUID) {
-    const info = peerReconnectInfo[peerUUID];
-    if (!info || !info.isReconnecting) {
-        console.log(`[Peer Reconnect] Stopping scheduled attempts for ${peerUUID}, no longer reconnecting.`);
-        return;
-    }
-    info.attempts++;
-    if (info.attempts > MAX_PEER_RECONNECT_ATTEMPTS) {
-        console.error(`[Peer Reconnect] Max reconnect attempts reached for ${peerUUID}. Giving up.`);
-        updateStatus(`Failed to reconnect with ${peerUUID.substring(0,6)}.`, 'red');
-        info.isReconnecting = false;
-        closePeerConnection(peerUUID);
-        return;
-    }
-    let delay = INITIAL_PEER_RECONNECT_DELAY_MS * Math.pow(1.5, info.attempts - 1);
-    delay = Math.min(delay, 30000);
-    console.log(`[Peer Reconnect] Scheduling attempt ${info.attempts}/${MAX_PEER_RECONNECT_ATTEMPTS} for ${peerUUID} in ${delay/1000}s.`);
-    updateStatus(`Reconnecting to ${peerUUID.substring(0,6)} (attempt ${info.attempts})...`, 'orange');
-    if (info.timerId) clearTimeout(info.timerId);
-    info.timerId = setTimeout(async () => {
-        if (!info || !info.isReconnecting) return;
-        console.log(`[Peer Reconnect] Attempting to reconnect to ${peerUUID} (attempt ${info.attempts})`);
-        if (peers[peerUUID] && peers[peerUUID].connectionState !== 'closed' && peers[peerUUID].connectionState !== 'failed') {
-            console.log(`[Peer Reconnect] Closing existing stale connection before re-offering to ${peerUUID}`);
-            closePeerConnection(peerUUID, true);
-        }
-        if (!peers[peerUUID]) {
-            await createOfferForPeer(peerUUID, true);
-        }
-    }, delay);
-}
-function stopPeerReconnect(peerUUID) {
-    const info = peerReconnectInfo[peerUUID];
-    if (info) {
-        console.log(`[Peer Reconnect] Stopping reconnect attempts for ${peerUUID}`);
-        if (info.timerId) clearTimeout(info.timerId);
-        info.isReconnecting = false;
-        delete peerReconnectInfo[peerUUID];
-    }
-}
-function setNegotiationTimeout(peerUUID) {
-    if (peerNegotiationTimers[peerUUID]) {
-        clearTimeout(peerNegotiationTimers[peerUUID]);
-    }
-    console.log(`[Negotiation Timeout] Setting timeout for ${peerUUID}`);
-    peerNegotiationTimers[peerUUID] = setTimeout(async () => {
-        console.warn(`[Negotiation Timeout] Timed out for ${peerUUID}. Current state: ${peers[peerUUID]?.connectionState}, signaling: ${peers[peerUUID]?.signalingState}`);
-        if (peers[peerUUID] && peers[peerUUID].connectionState !== 'connected') {
-            updateStatus(`Connection attempt with ${peerUUID.substring(0,6)} timed out. Retrying...`, 'orange');
-            const isCurrentlyFriend = await isFriend(peerUUID);
-            closePeerConnection(peerUUID, true);
-            if (isCurrentlyFriend && signalingSocket && signalingSocket.readyState === WebSocket.OPEN) {
-                 console.log(`[Negotiation Timeout] Triggering reconnect for ${peerUUID}`);
-                 startPeerReconnect(peerUUID);
-            } else {
-                 console.log(`[Negotiation Timeout] Not triggering reconnect for ${peerUUID} (not friend or WS closed).`);
-            }
-        }
-        delete peerNegotiationTimers[peerUUID];
-    }, NEGOTIATION_TIMEOUT_MS);
-}
-function clearNegotiationTimeout(peerUUID) {
-    if (peerNegotiationTimers[peerUUID]) {
-        console.log(`[Negotiation Timeout] Clearing timeout for ${peerUUID}`);
-        clearTimeout(peerNegotiationTimers[peerUUID]);
-        delete peerNegotiationTimers[peerUUID];
-    }
-}
+
 async function createPeerConnection(peerUUID) {
   if (peers[peerUUID]) {
     console.warn(`Closing existing PeerConnection for ${peerUUID}.`);
-    closePeerConnection(peerUUID, true);
+    closePeerConnection(peerUUID);
   }
-  clearNegotiationTimeout(peerUUID);
   iceCandidateQueue[peerUUID] = [];
   console.log(`Creating PeerConnection for ${peerUUID}...`);
   try {
     const peer = new RTCPeerConnection({
       iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
     });
+
     peer.onicecandidate = event => {
       if (event.candidate) {
         sendSignalingMessage({
@@ -608,64 +601,38 @@ async function createPeerConnection(peerUUID) {
         console.log(`All ICE candidates have been gathered for ${peerUUID}.`);
       }
     };
+
     peer.ondatachannel = event => {
       console.log(`Data channel received from ${peerUUID}:`, event.channel.label);
       const channel = event.channel;
       channel.binaryType = 'arraybuffer';
       setupDataChannelEvents(peerUUID, channel);
     };
+
     peer.ontrack = (event) => {
       console.log(`Track received from ${peerUUID}:`, event.track.kind);
       handleRemoteTrack(peerUUID, event.track, event.streams[0]);
     };
-    peer.onconnectionstatechange = async () => {
+
+    peer.onconnectionstatechange = () => {
       console.log(`PeerConnection state with ${peerUUID}: ${peer.connectionState}`);
       switch (peer.connectionState) {
         case 'connected':
           updateStatus(`Connected with ${peerUUID.substring(0,6)}!`, 'green');
-          clearNegotiationTimeout(peerUUID);
-          if (peerReconnectInfo[peerUUID] && peerReconnectInfo[peerUUID].isReconnecting) {
-            console.log(`[Peer Reconnect] Successfully reconnected to ${peerUUID}.`);
-            stopPeerReconnect(peerUUID);
-          }
-          const connectedPeers = Object.values(peers).filter(p => p?.connectionState === 'connected');
-          if (connectedPeers.length > 0 && (messageInputElement && !messageInputElement.disabled)) {
-          } else if (connectedPeers.length > 0) {
+          if (Object.keys(peers).filter(uuid => peers[uuid]?.connectionState === 'connected').length === 1) {
               setInteractionUiEnabled(true);
               currentAppState = AppState.CONNECTED;
           }
           break;
         case 'disconnected':
         case 'failed':
-          updateStatus(`Connection with ${peerUUID.substring(0,6)} ${peer.connectionState}`, 'orange');
-          clearNegotiationTimeout(peerUUID);
-          if (await isFriend(peerUUID) && (!peerReconnectInfo[peerUUID] || !peerReconnectInfo[peerUUID].isReconnecting)) {
-            if (signalingSocket && signalingSocket.readyState === WebSocket.OPEN) {
-                 console.log(`[Peer Reconnect] Connection to friend ${peerUUID} is ${peer.connectionState}. Initiating reconnect process.`);
-                 startPeerReconnect(peerUUID);
-            } else {
-                 console.log(`[Peer Reconnect] Connection to friend ${peerUUID} is ${peer.connectionState}, but signaling server is not connected. Cannot auto-reconnect peer.`);
-                 closePeerConnection(peerUUID);
-            }
-          }
-          const stillConnectedPeers = Object.values(peers).filter(p => p?.connectionState === 'connected');
-          if (stillConnectedPeers.length === 0 && currentAppState !== AppState.CONNECTING) {
-              setInteractionUiEnabled(false); currentAppState = AppState.INITIAL; updateStatus('All peers disconnected.', 'orange');
-          }
-          break;
         case 'closed':
-          updateStatus(`Connection with ${peerUUID.substring(0,6)} closed.`, 'orange');
-          clearNegotiationTimeout(peerUUID);
-          stopPeerReconnect(peerUUID);
-          if (peers[peerUUID]) {
-              console.log(`[onconnectionstatechange closed] Peer ${peerUUID} object still exists. Ensuring full cleanup via closePeerConnection.`);
-              closePeerConnection(peerUUID, true);
-          }
-          const stillConnectedPeersAfterClose = Object.values(peers).filter(p => p?.connectionState === 'connected');
-          if (stillConnectedPeersAfterClose.length === 0 && currentAppState !== AppState.CONNECTING) {
+          updateStatus(`Connection with ${peerUUID.substring(0,6)} closed (${peer.connectionState})`, 'orange');
+          closePeerConnection(peerUUID);
+          if (Object.keys(peers).length === 0) {
               setInteractionUiEnabled(false);
               currentAppState = AppState.INITIAL;
-              updateStatus('All peers disconnected or connections closed.', 'orange');
+              updateStatus('All peers disconnected.', 'orange');
           }
           break;
         case 'connecting':
@@ -675,9 +642,11 @@ async function createPeerConnection(peerUUID) {
              updateStatus(`Connection state with ${peerUUID.substring(0,6)}: ${peer.connectionState}`, 'orange');
       }
     };
+
     peers[peerUUID] = peer;
     console.log(`PeerConnection created for ${peerUUID}.`);
     return peer;
+
   } catch (error) {
     console.error(`Error creating PeerConnection for ${peerUUID}:`, error);
     updateStatus(`Connection setup error: ${error.message}`, 'red');
@@ -685,15 +654,20 @@ async function createPeerConnection(peerUUID) {
     return null;
   }
 }
+
 function setupDataChannelEvents(peerUUID, channel) {
     if (!channel) return;
+
     dataChannels[peerUUID] = channel;
+
     channel.onmessage = (event) => handleDataChannelMessage(event, peerUUID);
     channel.onopen = () => {
         console.log(`Data channel with ${peerUUID} opened!`);
+
         const openPeers = Object.entries(dataChannels)
                                 .filter(([uuid, dc]) => dc && dc.readyState === 'open')
                                 .map(([uuid, dc]) => uuid.substring(0,6));
+
         if (openPeers.length > 0) {
             setInteractionUiEnabled(true);
             currentAppState = AppState.CONNECTED;
@@ -705,9 +679,11 @@ function setupDataChannelEvents(peerUUID, channel) {
     channel.onclose = () => {
         console.log(`Data channel with ${peerUUID} closed.`);
         delete dataChannels[peerUUID];
+
         const openPeers = Object.entries(dataChannels)
                                 .filter(([uuid, dc]) => dc && dc.readyState === 'open')
                                 .map(([uuid, dc]) => uuid.substring(0,6));
+
         if (openPeers.length === 0) {
             updateStatus(`Data channel with ${peerUUID.substring(0,6)} closed. No active data channels.`, 'orange');
             setInteractionUiEnabled(false);
@@ -721,10 +697,12 @@ function setupDataChannelEvents(peerUUID, channel) {
         closePeerConnection(peerUUID);
     };
 }
-async function createOfferForPeer(peerUUID, isReconnectAttempt = false) {
+
+async function createOfferForPeer(peerUUID) {
     currentAppState = AppState.CONNECTING;
     const peer = await createPeerConnection(peerUUID);
     if (!peer) return;
+
     const offerSdp = await createOfferAndSetLocal(peerUUID);
     if (offerSdp) {
         console.log(`Sending offer to ${peerUUID}`);
@@ -732,12 +710,12 @@ async function createOfferForPeer(peerUUID, isReconnectAttempt = false) {
             type: 'offer',
             payload: { target: peerUUID, sdp: offerSdp }
         });
-        setNegotiationTimeout(peerUUID);
     } else {
         console.error(`Failed to create offer for ${peerUUID}`);
         closePeerConnection(peerUUID);
     }
 }
+
 async function createOfferAndSetLocal(peerUUID) {
   const peer = peers[peerUUID];
   if (!peer) {
@@ -749,6 +727,7 @@ async function createOfferAndSetLocal(peerUUID) {
     const channel = peer.createDataChannel('cybernetcall-data');
     channel.binaryType = 'arraybuffer';
     setupDataChannelEvents(peerUUID, channel);
+
     if (localStream) {
         localStream.getTracks().forEach(track => {
             try {
@@ -756,6 +735,7 @@ async function createOfferAndSetLocal(peerUUID) {
             } catch (e) { console.error(`Error adding track to ${peerUUID}:`, e); }
         });
     }
+
     console.log(`Creating Offer for ${peerUUID}...`);
     const offer = await peer.createOffer();
     await peer.setLocalDescription(offer);
@@ -767,76 +747,61 @@ async function createOfferAndSetLocal(peerUUID) {
     return null;
   }
 }
+
 async function handleOfferAndCreateAnswer(peerUUID, offerSdp) {
-    let peer = peers[peerUUID];
-    const isRenegotiation = !!peer;
-    const alreadyFriend = await isFriend(peerUUID);
+  let peer = peers[peerUUID];
+  const isRenegotiation = !!peer;
 
-    if (!alreadyFriend) {
-        console.log(`[handleOfferAndCreateAnswer] Offer from non-friend ${peerUUID}. Displaying confirmation.`);
-        pendingOfferDetails = { peerUUID, offerSdp, isRenegotiation };
-        if (confirmFriendIdTextElement) confirmFriendIdTextElement.textContent = `Peer ${peerUUID.substring(0, 8)}... wants to connect. Add as friend?`;
-        if (addFriendConfirmModal) addFriendConfirmModal.style.display = 'block';
-        return; 
-    }
+  if (!isRenegotiation) {
 
-    if (!isRenegotiation) {
-        console.log(`No existing PeerConnection for ${peerUUID} (but is a friend). Creating one...`);
-        iceCandidateQueue[peerUUID] = [];
-        peer = await createPeerConnection(peerUUID);
-        if (!peer) {
-            console.error(`Failed to create PeerConnection for friend ${peerUUID} to handle offer.`);
-            return;
-        }
-    }
-    await proceedWithOffer(peerUUID, offerSdp, isRenegotiation);
-}
-
-async function proceedWithOffer(peerUUID, offerSdp, isRenegotiation) {
-    let peer = peers[peerUUID];
+    console.log(`No existing PeerConnection for ${peerUUID}. Creating one...`);
+    iceCandidateQueue[peerUUID] = []; 
+    peer = await createPeerConnection(peerUUID);
     if (!peer) {
-        console.log(`[proceedWithOffer] Peer object for ${peerUUID} not found, creating one.`);
-        peer = await createPeerConnection(peerUUID);
-        if (!peer) {
-            console.error(`[proceedWithOffer] Failed to create PeerConnection for ${peerUUID}.`);
-            return;
-        }
+        console.error(`Failed to create PeerConnection for ${peerUUID} to handle offer.`);
+        return;
     }
 
-    console.log(`[proceedWithOffer] Received offer from ${peerUUID}, setting remote description...`);
-    try {
-        await peer.setRemoteDescription(new RTCSessionDescription(offerSdp));
-        await processIceCandidateQueue(peerUUID);
+    const alreadyFriend = await isFriend(peerUUID);
+    if (!alreadyFriend) {
+        console.log(`[handleOfferAndCreateAnswer] Peer ${peerUUID} (sender of offer) is not a friend. Adding them now.`);
+        await addFriend(peerUUID);
+    }
+  }
+  console.log(`Received offer from ${peerUUID}, setting remote description...`);
+  try {
+    await peer.setRemoteDescription(new RTCSessionDescription(offerSdp));
+    await processIceCandidateQueue(peerUUID); // Process any queued candidates    
 
-        if (localStream) {
-            localStream.getTracks().forEach(track => {
-                try {
-                    const senderExists = peer.getSenders().find(s => s.track === track);
-                    if (!senderExists) {
-                        peer.addTrack(track, localStream);
-                        console.log(`[proceedWithOffer] Added existing ${track.kind} track to ${peerUUID} on offer`);
-                    }
-                } catch (e) { console.error(`[proceedWithOffer] Error adding existing track to ${peerUUID} on offer:`, e); }
-            });
-        }
-
-        console.log(`[proceedWithOffer] Creating Answer for ${peerUUID}...`);
-        const answer = await peer.createAnswer();
-        await peer.setLocalDescription(answer);
-        console.log(`[proceedWithOffer] Answer created and local description set for ${peerUUID}.`);
-
-        sendSignalingMessage({
-            type: 'answer',
-            payload: { target: peerUUID, sdp: peer.localDescription }
+    if (localStream) {
+        localStream.getTracks().forEach(track => {
+            try {
+                const senderExists = peer.getSenders().find(s => s.track === track);
+                if (!senderExists) {
+                    peer.addTrack(track, localStream);
+                    console.log(`Added existing ${track.kind} track to ${peerUUID} on offer`);
+                }
+            } catch (e) { console.error(`Error adding existing track to ${peerUUID} on offer:`, e); }
         });
-        setNegotiationTimeout(peerUUID);
-        console.log(`[proceedWithOffer] Sent ${isRenegotiation ? 'renegotiation ' : ''}answer to ${peerUUID}.`);
-    } catch (error) {
-        console.error(`[proceedWithOffer] Error handling offer or creating/setting answer for ${peerUUID}:`, error);
-        updateStatus(`Offer handling / Answer creation error for ${peerUUID}: ${error.message}`, 'red');
-        closePeerConnection(peerUUID);
     }
+
+    console.log(`Creating Answer for ${peerUUID}...`);
+    const answer = await peer.createAnswer();
+    await peer.setLocalDescription(answer);
+    console.log(`Answer created and local description set for ${peerUUID}.`);
+    
+    sendSignalingMessage({
+        type: 'answer',
+        payload: { target: peerUUID, sdp: peer.localDescription }
+    });
+    console.log(`Sent ${isRenegotiation ? 'renegotiation ' : ''}answer to ${peerUUID}.`);
+  } catch (error) {
+    console.error(`Error handling offer or creating/setting answer for ${peerUUID}:`, error);
+    updateStatus(`Offer handling / Answer creation error for ${peerUUID}: ${error.message}`, 'red');
+    closePeerConnection(peerUUID);
+  }
 }
+
 async function handleAnswer(peerUUID, answerSdp) {
   const peer = peers[peerUUID];
   if (!peer) {
@@ -856,6 +821,7 @@ async function handleAnswer(peerUUID, answerSdp) {
     return false;
   }
 }
+
 async function handleIceCandidate(peerUUID, candidateData) {
     try {
         const peer = peers[peerUUID];
@@ -867,6 +833,7 @@ async function handleIceCandidate(peerUUID, candidateData) {
             iceCandidateQueue[peerUUID].push(candidateData);
             return;
         }
+
         if (candidateData) {
             if (peer.remoteDescription) {
                 await peer.addIceCandidate(new RTCIceCandidate(candidateData));
@@ -882,6 +849,7 @@ async function handleIceCandidate(peerUUID, candidateData) {
         console.error(`Error adding received ICE candidate for ${peerUUID}:`, error);
     }
 }
+
 async function processIceCandidateQueue(peerUUID) {
     const peer = peers[peerUUID];
     if (peer && peer.remoteDescription && iceCandidateQueue[peerUUID]) {
@@ -896,6 +864,7 @@ async function processIceCandidateQueue(peerUUID) {
         }
     }
 }
+
 function resetConnection() {
     console.log("Resetting connection state...");
     try {
@@ -905,16 +874,18 @@ function resetConnection() {
             window.html5QrCodeScanner.clear().catch(e => console.warn("Error clearing scanner during reset:", e));
         }
     } catch(e) { console.warn("Error accessing scanner state during reset:", e); }
+
     if (signalingSocket) {
         signalingSocket.onclose = null;
         signalingSocket.onerror = null;
         signalingSocket.onmessage = null;
         signalingSocket.onopen = null;
         if (signalingSocket.readyState === WebSocket.OPEN || signalingSocket.readyState === WebSocket.CONNECTING) {
-            signalingSocket.close(1000);
+            signalingSocket.close(1000); // Normal closure
         }
         signalingSocket = null;
     }
+
     Object.values(dataChannels).forEach(channel => {
         if (channel) {
             channel.onmessage = null;
@@ -927,8 +898,18 @@ function resetConnection() {
         }
     });
     dataChannels = {};
-    Object.keys(peers).forEach(peerUUID => closePeerConnection(peerUUID, true));
+
+    Object.values(peers).forEach(peer => {
+        if (peer) {
+            peer.onicecandidate = null;
+            peer.ondatachannel = null;
+            peer.ontrack = null;
+            peer.onconnectionstatechange = null;
+            peer.close();
+        }
+    });
     peers = {};
+
     if (localStream) {
         localStream.getTracks().forEach(track => track.stop());
         localStream = null;
@@ -941,73 +922,67 @@ function resetConnection() {
     } else if (remoteVideoElement) {
         remoteVideoElement.srcObject = null;
     }
+
     currentAppState = AppState.INITIAL;
+
     receivedSize = {};
     incomingFileInfo = {};
     if (fileTransferStatusElement) fileTransferStatusElement.textContent = '';
     currentCallerId = null;
     if (incomingCallModal) incomingCallModal.style.display = 'none';
-    if (addFriendConfirmModal) addFriendConfirmModal.style.display = 'none';
-    pendingOfferDetails = null;
+
     if(qrReaderElement) qrReaderElement.style.display = 'none';
     if(roomInputElement) roomInputElement.disabled = true;
     if(joinRoomButton) joinRoomButton.disabled = true;
     if(startScanButton) startScanButton.disabled = false;
     updateStatus('Ready. Add friends or wait for connection.', 'black');
     setInteractionUiEnabled(false);
+
     if (wsReconnectTimer) clearTimeout(wsReconnectTimer);
     wsReconnectTimer = null;
-    isAttemptingReconnect = false;
+    isAttemptingReconnect = false;    
     if(messageAreaElement) messageAreaElement.innerHTML = '';
     if(postAreaElement) postAreaElement.innerHTML = '';
 }
-function closePeerConnection(peerUUID, silent = false) {
-    clearNegotiationTimeout(peerUUID);
-    stopPeerReconnect(peerUUID);
+
+function closePeerConnection(peerUUID) {
     const peer = peers[peerUUID];
     if (peer) {
-        if (!silent) console.log(`Closing PeerConnection with ${peerUUID}`);
+        console.log(`Closing PeerConnection with ${peerUUID}`);
         peer.onicecandidate = null;
         peer.ondatachannel = null;
         peer.ontrack = null;
-        const tempOnConnectionStateChange = peer.onconnectionstatechange;
         peer.onconnectionstatechange = null;
-        if (peer.signalingState !== 'closed') {
-            peer.close();
-        }
+        peer.close();
         delete peers[peerUUID];
         delete iceCandidateQueue[peerUUID];
     }
     const channel = dataChannels[peerUUID];
     if (channel) {
-        if (channel.readyState !== 'closed') {
-            channel.close();
-        }
-        delete dataChannels[peerUUID];
+        channel.close();
     }
     const videoElement = document.getElementById(`remoteVideo-${peerUUID}`);
     if (videoElement) {
         videoElement.remove();
     }
-    if (!silent) {
-        const connectedPeersCount = Object.values(peers).filter(p => p?.connectionState === 'connected').length;
-        if (connectedPeersCount === 0 && currentAppState !== AppState.CONNECTING) {
-             setInteractionUiEnabled(false);
-             currentAppState = AppState.INITIAL;
-             updateStatus(`Connection with ${peerUUID.substring(0,6)} closed. No active connections.`, 'orange');
-        } else if (connectedPeersCount > 0) {
-            updateStatus(`Connection with ${peerUUID.substring(0,6)} closed. Still connected to others.`, 'orange');
-        }
+    if (Object.keys(peers).length === 0) {
+        setInteractionUiEnabled(false);
+        currentAppState = AppState.INITIAL;
+        updateStatus(`Last peer disconnected.`, 'orange');
     }
 }
+
 function handleDataChannelMessage(event, senderUUID) {
   if (event.data instanceof ArrayBuffer) {
+
     if (lastReceivedFileChunkMeta[senderUUID]) {
         const meta = lastReceivedFileChunkMeta[senderUUID];
+
         processFileChunk(meta, event.data);
         lastReceivedFileChunkMeta[senderUUID] = null;
       } else {
         console.warn(`Received ArrayBuffer from ${senderUUID} without preceding file-chunk metadata. Discarding.`);
+
     }
   } else if (typeof event.data === 'string') {
     processTextMessage(event.data, senderUUID);
@@ -1015,11 +990,12 @@ function handleDataChannelMessage(event, senderUUID) {
     console.warn(`Received unexpected data type from ${senderUUID}:`, typeof event.data);
   }
 }
+
 async function processTextMessage(dataString, senderUUID) {
     try {
         console.log(`[Receiver processTextMessage] Raw string data from ${senderUUID}:`, dataString.substring(0, 200) + (dataString.length > 200 ? '...' : ''));
         const message = JSON.parse(dataString);
-        console.log(`[Receiver processTextMessage] Parsed message from ${senderUUID}:`, JSON.parse(JSON.stringify(message)));
+        console.log(`[Receiver processTextMessage] Parsed message from ${senderUUID}:`, JSON.parse(JSON.stringify(message))); // Deep copy for logging
         switch (message.type) {
             case 'post':
                 message.sender = message.sender || senderUUID;
@@ -1043,16 +1019,19 @@ async function processTextMessage(dataString, senderUUID) {
                     name: message.name,
                     size: message.size,
                     type: message.fileType
+
                 };
-                console.log(`[Receiver processTextMessage] 'file-metadata' case: incomingFileInfo for ${message.fileId} SET to:`, JSON.parse(JSON.stringify(incomingFileInfo[message.fileId])));
+                console.log(`[Receiver processTextMessage] 'file-metadata' case: incomingFileInfo for ${message.fileId} SET to:`, JSON.parse(JSON.stringify(incomingFileInfo[message.fileId])));      
                 receivedSize[message.fileId] = 0;
+
                 console.log(`Receiving metadata for file: ${message.name} (${message.size} bytes) from ${senderUUID.substring(0,6)}`);
                 if (fileTransferStatusElement) {
                     fileTransferStatusElement.textContent = `Receiving ${message.name}... 0%`;
                 }
                 break;
             case 'file-chunk':
-                lastReceivedFileChunkMeta[senderUUID] = { ...message, senderUUID };
+
+                lastReceivedFileChunkMeta[senderUUID] = { ...message, senderUUID }; // Store it, associate with sender
                 console.log(`[Receiver processTextMessage] 'file-chunk' case: Stored chunk-meta for ${message.fileId}, chunk ${message.index} from ${senderUUID}.`);
                 break;
             default:
@@ -1067,8 +1046,10 @@ async function processTextMessage(dataString, senderUUID) {
         console.error(`[Receiver processTextMessage] Error parsing data from ${senderUUID}:`, error, "Raw data:", dataString.substring(0, 200) + (dataString.length > 200 ? '...' : ''));
     }
 }
+
 async function processFileChunk(chunkMeta, chunkDataAsArrayBuffer) {
     const { fileId, index: chunkIndex, last: isLast, senderUUID } = chunkMeta;
+
     console.log(`[Receiver processFileChunk] For fileId ${fileId}, chunk ${chunkIndex}. Current incomingFileInfo[${fileId}]:`, incomingFileInfo[fileId] ? JSON.parse(JSON.stringify(incomingFileInfo[fileId])) : 'NOT FOUND', "Full incomingFileInfo:", JSON.parse(JSON.stringify(incomingFileInfo)));
     if (!incomingFileInfo[fileId]) {
       console.error(`Received chunk data for unknown file transfer (no metadata): ${fileId} from ${senderUUID}`);
@@ -1076,34 +1057,45 @@ async function processFileChunk(chunkMeta, chunkDataAsArrayBuffer) {
     }
     let db;
     try {
+
         if (!(chunkDataAsArrayBuffer instanceof ArrayBuffer)) {
             console.error(`processFileChunk called with non-ArrayBuffer data for file ${fileId} from ${senderUUID}`, chunkDataAsArrayBuffer);
             await cleanupFileTransferData(fileId, null);
             return;
         }
+
         if (!dbPromise) {
             console.error("dbPromise not available, cannot save chunk to DB.");
             if (fileTransferStatusElement) fileTransferStatusElement.innerHTML = DOMPurify.sanitize(`DB Error for ${incomingFileInfo[fileId]?.name || 'file'}`);
+
             delete incomingFileInfo[fileId];
             if (receivedSize) delete receivedSize[fileId];
             return;
         }
-        db = await dbPromise;
+
+        db = await dbPromise; 
         const tx = db.transaction('fileChunks', 'readwrite');
         await tx.store.put({ fileId: fileId, chunkIndex: chunkIndex, data: chunkDataAsArrayBuffer });
         await tx.done;
         console.log(`[File Chunk DB] Saved chunk ${chunkIndex} for file ${fileId} to IndexedDB.`);
+
+
         const readTxForSize = db.transaction('fileChunks', 'readonly');
         const allChunksForFileFromDb = await readTxForSize.objectStore('fileChunks').index('by_fileId').getAll(fileId);
         await readTxForSize.done;
         let actualReceivedSize = 0;
         allChunksForFileFromDb.forEach(c => actualReceivedSize += c.data.byteLength);
         receivedSize[fileId] = actualReceivedSize;
+
         console.log(`[File Chunk] ID: ${fileId}, Index: ${chunkIndex}, Size: ${chunkDataAsArrayBuffer.byteLength}, Total Received (DB): ${receivedSize[fileId]}, Expected: ${incomingFileInfo[fileId].size}, Is Last: ${isLast}`);
+
         const progress = Math.round((receivedSize[fileId] / incomingFileInfo[fileId].size) * 100);
+
         if (fileTransferStatusElement) {
           fileTransferStatusElement.innerHTML = DOMPurify.sanitize(`Receiving ${incomingFileInfo[fileId].name}... ${progress}%`);
+
         }
+
         if (isLast) {
             if (receivedSize[fileId] !== incomingFileInfo[fileId].size) {
                 console.error(`[File Assembly Error] Final size mismatch for file ${fileId}. Expected ${incomingFileInfo[fileId].size}, but received ${receivedSize[fileId]}.`);
@@ -1111,22 +1103,28 @@ async function processFileChunk(chunkMeta, chunkDataAsArrayBuffer) {
                 await cleanupFileTransferData(fileId, db);
                 return;
             }
+
             console.log("Received last chunk for file:", incomingFileInfo[fileId].name);
+
             allChunksForFileFromDb.sort((a, b) => a.chunkIndex - b.chunkIndex);
+
             if (allChunksForFileFromDb.length !== chunkIndex + 1) {
                  console.warn(`Missing chunks for file ${fileId}. Expected ${chunkIndex + 1}, got ${allChunksForFileFromDb.length} from DB. Cannot assemble.`);
                  if (fileTransferStatusElement) fileTransferStatusElement.innerHTML = DOMPurify.sanitize(`Error receiving ${incomingFileInfo[fileId].name} (missing chunks from DB)`);
                  await cleanupFileTransferData(fileId, db);
                  return;
             }
+
             const orderedChunkData = allChunksForFileFromDb.map(c => c.data);
             const fileBlob = new Blob(orderedChunkData, { type: incomingFileInfo[fileId].type });
+
             const downloadLink = document.createElement('a');
             downloadLink.href = URL.createObjectURL(fileBlob);
             downloadLink.download = incomingFileInfo[fileId].name;
             downloadLink.textContent = `Download ${incomingFileInfo[fileId].name}`;
             downloadLink.style.display = 'block';
             downloadLink.style.marginTop = '5px';
+
             if (fileTransferStatusElement) {
               fileTransferStatusElement.innerHTML = '';
                 fileTransferStatusElement.appendChild(downloadLink);
@@ -1135,15 +1133,19 @@ async function processFileChunk(chunkMeta, chunkDataAsArrayBuffer) {
             }
             await cleanupFileTransferData(fileId, db, true);
         }
-    } catch (error) {
+    } catch (error) { 
+
         console.error(`Error processing file chunk data for file ${fileId} (chunk ${chunkIndex}) from ${senderUUID} with IndexedDB:`, error, chunkMeta);
-    if (fileTransferStatusElement) fileTransferStatusElement.innerHTML = DOMPurify.sanitize(`Error processing chunk for ${incomingFileInfo[fileId]?.name || 'unknown file'}`);
-    await cleanupFileTransferData(fileId, db);
-  }
-}
+    if (fileTransferStatusElement) fileTransferStatusElement.innerHTML = DOMPurify.sanitize(`Error processing chunk for ${incomingFileInfo[fileId]?.name || 'unknown file'}`);    
+
+    await cleanupFileTransferData(fileId, db); 
+  } 
+} 
+
 function broadcastMessage(messageString) {
     let sentToAtLeastOne = false;
     const openChannels = Object.entries(dataChannels).filter(([uuid, dc]) => dc && dc.readyState === 'open');
+
     if (openChannels.length > 0) {
         openChannels.forEach(([uuid, dc]) => {
             try {
@@ -1159,13 +1161,17 @@ function broadcastMessage(messageString) {
     }
     return sentToAtLeastOne;
 }
+
 async function cleanupFileTransferData(fileId, db, transferComplete = false) {
     console.log(`Cleaning up data for file transfer ${fileId}. Complete: ${transferComplete}`);
+
+
     if (db) {
         try {
             const deleteTx = db.transaction('fileChunks', 'readwrite');
             const allChunksForFile = await deleteTx.objectStore('fileChunks').index('by_fileId').getAllKeys(fileId);
             for (const key of allChunksForFile) {
+
                  await deleteTx.objectStore('fileChunks').delete(key);
             }
             await deleteTx.done;
@@ -1174,9 +1180,11 @@ async function cleanupFileTransferData(fileId, db, transferComplete = false) {
             console.error(`[File Chunk DB] Error deleting chunks for file ${fileId}:`, dbError);
         }
     }
+
     delete incomingFileInfo[fileId];
     if (receivedSize) delete receivedSize[fileId];
 }
+
 function broadcastBinaryData(dataBuffer) {
     const openChannels = Object.entries(dataChannels).filter(([uuid, dc]) => dc && dc.readyState === 'open');
     if (openChannels.length > 0) {
@@ -1193,9 +1201,11 @@ function broadcastBinaryData(dataBuffer) {
         return false;
     }
 }
+
 function handleSendMessage() {
     const input = messageInputElement;
     const content = input?.value?.trim();
+
     if (content) {
         const message = {
             type: 'direct-message',
@@ -1204,6 +1214,7 @@ function handleSendMessage() {
             timestamp: new Date().toISOString()
         };
         const messageString = JSON.stringify(message);
+
         if (broadcastMessage(messageString)) {
             displayDirectMessage(message, true);
             if(input) input.value = '';
@@ -1212,10 +1223,12 @@ function handleSendMessage() {
         }
     }
 }
+
 function displayDirectMessage(message, isOwnMessage = false, senderUUID = null) {
     if (!messageAreaElement) return;
     const div = document.createElement('div');
     div.classList.add('message', isOwnMessage ? 'own-message' : 'peer-message');
+
     let senderName = 'Unknown';
     if (isOwnMessage) {
         senderName = 'You';
@@ -1224,11 +1237,14 @@ function displayDirectMessage(message, isOwnMessage = false, senderUUID = null) 
     } else if (message.sender) {
         senderName = `Peer (${message.sender.substring(0, 6)})`;
     }
+
     const unsafeHTML = `<strong>${senderName}:</strong> ${message.content}`;
     div.innerHTML = DOMPurify.sanitize(unsafeHTML);
+
     messageAreaElement.appendChild(div);
     messageAreaElement.scrollTop = messageAreaElement.scrollHeight;
 }
+
 async function handleSendPost() {
   const input = postInputElement;
   const content = input?.value?.trim();
@@ -1242,31 +1258,38 @@ async function handleSendPost() {
     };
     await savePost(post);
     displayPost(post, true);
+
     const postString = JSON.stringify(post);
     if (!broadcastMessage(postString)) {
         console.log("Post saved locally, but not sent (no open DataChannel).");
         alert("Not connected. Post saved locally only.");
     }
+
     if(input) input.value = '';
   }
 }
+
 function handleSendFile() {
     if (!fileInputElement || !fileInputElement.files || fileInputElement.files.length === 0) {
         alert("Please select a file.");
         return;
     }
+
     const openChannels = Object.entries(dataChannels).filter(([uuid, dc]) => dc && dc.readyState === 'open');
     if (openChannels.length === 0) {
         console.warn("Send file clicked but no open data channels.");
         alert("Not connected to any peers to send the file.");
         return;
     }
+
     const file = fileInputElement.files[0];
     const snapshottedFileSize = file.size;
     const fileId = generateUUID();
     console.log(`Preparing to send file: ${file.name}, size: ${file.size}, ID: ${fileId}`);
+
     if (fileTransferStatusElement) fileTransferStatusElement.innerHTML = DOMPurify.sanitize(`Sending ${file.name}... 0%`);
     sendFileButton.disabled = true;
+
     const metadata = {
         type: 'file-metadata',
         fileId: fileId,
@@ -1275,15 +1298,18 @@ function handleSendFile() {
         fileType: file.type
     };
     const metadataString = JSON.stringify(metadata);
-    console.log(`[Sender handleSendFile] Broadcasting 'file-metadata':`, metadata);
+
+    console.log(`[Sender handleSendFile] Broadcasting 'file-metadata':`, metadata);    
     if (!broadcastMessage(metadataString)) {
         alert("Failed to send file metadata to any peer.");
         sendFileButton.disabled = false;
         return;
     }
+
     fileReader = new FileReader();
     let offset = 0;
     let chunkIndex = 0;
+
     fileReader.addEventListener('error', error => {
         console.error('FileReader error:', error);
         alert('File read error occurred.');
@@ -1297,10 +1323,12 @@ function handleSendFile() {
     });
     fileReader.addEventListener('load', e => {
         const chunkArrayBuffer = e.target.result;
+
         if (openChannels.length > 0) {
             const firstChannel = openChannels[0][1];
             const bufferedAmount = firstChannel.bufferedAmount || 0;
-            if (bufferedAmount > CHUNK_SIZE * 16) {
+
+            if (bufferedAmount > CHUNK_SIZE * 16) { 
                 console.warn(`DataChannel buffer high (${bufferedAmount}), pausing send...`);
                 setTimeout(() => {
                     sendFileChunk(chunkArrayBuffer, file.name, snapshottedFileSize, fileId, chunkIndex, offset);
@@ -1309,12 +1337,13 @@ function handleSendFile() {
             }
         } else {
             console.warn("No open channels to send file chunk.");
-            if (fileTransferStatusElement) fileTransferStatusElement.innerHTML = DOMPurify.sanitize('Connection lost during send');
+            if (fileTransferStatusElement) fileTransferStatusElement.innerHTML = DOMPurify.sanitize('Connection lost during send');            
             sendFileButton.disabled = false;
             return;
         }
         sendFileChunk(chunkArrayBuffer, file.name, snapshottedFileSize, fileId, chunkIndex, offset);
     });
+
     const readSlice = o => {
         try {
             const end = Math.min(o + CHUNK_SIZE, snapshottedFileSize);
@@ -1327,15 +1356,20 @@ function handleSendFile() {
              sendFileButton.disabled = false;
         }
     };
+
     const sendFileChunk = (chunkDataAsArrayBuffer, originalFileName, originalFileSizeInLogic, currentFileId, currentChunkIndex, currentOffset, retryCount = 0) => {
          try {
+
             const chunkMetaMessage = {
                  type: 'file-chunk',
                  fileId: currentFileId,
                  index: currentChunkIndex,
                  last: ((currentOffset + chunkDataAsArrayBuffer.byteLength) >= originalFileSizeInLogic)
+
              };
              const metaString = JSON.stringify(chunkMetaMessage);
+
+
              if (!broadcastMessage(metaString)) {
                  if (retryCount < 3) throw new Error(`Failed to send chunk meta ${currentChunkIndex} to any peer.`);
                  else {
@@ -1343,7 +1377,10 @@ function handleSendFile() {
                     throw new Error(`Failed to send chunk meta ${currentChunkIndex} after multiple retries.`);
                  }
              }
+             
+
              setTimeout(() => {
+
                 if (!broadcastBinaryData(chunkDataAsArrayBuffer)) {
                     if (retryCount < 3) throw new Error(`Failed to send chunk data ${currentChunkIndex} to any peer.`);
                  else {
@@ -1351,12 +1388,16 @@ function handleSendFile() {
                     throw new Error(`Failed to send chunk data ${currentChunkIndex} after multiple retries.`);
                  }
              }
+
              const newOffset = currentOffset + chunkDataAsArrayBuffer.byteLength;
+
              const progress = Math.round((newOffset / originalFileSizeInLogic) * 100);
              if (fileTransferStatusElement) fileTransferStatusElement.textContent = `Sending ${originalFileName}... ${progress}%`;
+
              if (newOffset < originalFileSizeInLogic) {
                 offset = newOffset;
                  chunkIndex++;
+
                  setTimeout(() => readSlice(newOffset), 0);
              } else {
                  console.log(`File ${originalFileName} sent successfully.`);
@@ -1369,6 +1410,7 @@ function handleSendFile() {
              console.error(`Error sending chunk ${currentChunkIndex}:`, error);
              if (retryCount < 3) {
                  console.log(`Retrying chunk ${currentChunkIndex} (attempt ${retryCount + 1})...`);
+                 // Retry the whole chunk (meta + data) after a delay
                  setTimeout(() => sendFileChunk(chunkDataAsArrayBuffer, originalFileName, originalFileSizeInLogic, currentFileId, currentChunkIndex, currentOffset, retryCount + 1), 1000 * (retryCount + 1));
              } else {
                  alert(`Failed to send chunk ${currentChunkIndex} after multiple retries.`);
@@ -1379,6 +1421,7 @@ function handleSendFile() {
     }
     readSlice(0);
 }
+
 async function toggleVideoCall() {
   if (currentAppState !== AppState.CONNECTED && currentAppState !== AppState.CONNECTING && !Object.values(peers).some(p => p && p.connectionState === 'connected')) {
         console.warn("Call button clicked but not connected.");
@@ -1394,6 +1437,7 @@ async function toggleVideoCall() {
                 videoTrack.enabled = false;
             }
             if (localVideoElement) localVideoElement.srcObject = localStream;
+
             const renegotiationPromises = Object.entries(peers).map(async ([peerUUID, peer]) => {
                 console.log(`[toggleVideoCall START] Processing peer: ${peerUUID}, State: ${peer?.connectionState}`);
                 if (peer) {
@@ -1410,6 +1454,7 @@ async function toggleVideoCall() {
                 }
             });
             await Promise.all(renegotiationPromises);
+
             if(videoButton) videoButton.textContent = '🚫';
             if(callButton) callButton.textContent = 'End Call';
         } catch (error) {
@@ -1440,11 +1485,13 @@ async function toggleVideoCall() {
             }
         });
         await Promise.all(renegotiationPromises);
+
         if(localVideoElement) localVideoElement.srcObject = null;
         if(callButton) callButton.textContent = '📞';
         if(videoButton) videoButton.textContent = '🎥';
     }
 }
+
 async function createAndSendOfferForRenegotiation(peerUUID, peer) {
     if (!peer || peer.connectionState !== 'connected') {
         console.warn(`Cannot renegotiate with ${peerUUID}, connection not established.`);
@@ -1462,11 +1509,11 @@ async function createAndSendOfferForRenegotiation(peerUUID, peer) {
             type: 'offer',
             payload: { target: peerUUID, sdp: peer.localDescription }
         });
-        setNegotiationTimeout(peerUUID);
     } catch (error) {
         console.error(`Error during renegotiation offer for ${peerUUID}:`, error);
     }
 }
+
 function toggleLocalVideo() {
     if (localStream) {
         const videoTrack = localStream.getVideoTracks()[0];
@@ -1476,15 +1523,18 @@ function toggleLocalVideo() {
             console.log(`Local video ${videoTrack.enabled ? 'enabled' : 'disabled'}`);
         }
       } else {
-          console.warn("toggleLocalVideo called but no localStream available.");
+          console.warn("toggleLocalVideo called but no localStream available.");  
       }
 }
+
+
 function handleRemoteTrack(peerUUID, track, stream) {
     console.log(`[handleRemoteTrack] Called for peer ${peerUUID}, track kind: ${track.kind}, stream ID: ${stream?.id}`);
     if (!remoteVideosContainer) {
         console.warn("Remote videos container not found.");
         return;
     }
+
     let videoElement = document.getElementById(`remoteVideo-${peerUUID}`);
     if (!videoElement) {
         console.log(`Creating video element for ${peerUUID}`);
@@ -1494,6 +1544,7 @@ function handleRemoteTrack(peerUUID, track, stream) {
         videoElement.playsInline = true;
         remoteVideosContainer.appendChild(videoElement);
     }
+
     if (!videoElement.srcObject && stream) {
         videoElement.srcObject = stream;
     } else if (videoElement.srcObject) {
@@ -1505,6 +1556,7 @@ function handleRemoteTrack(peerUUID, track, stream) {
         console.warn(`Could not set srcObject for ${peerUUID} - no stream provided?`);
     }
 }
+
 function updateQrCodeWithValue(value) {
     if (!qrElement) {
         console.warn("QR element not available for update.");
@@ -1534,6 +1586,7 @@ function updateQrCodeWithValue(value) {
         setTimeout(() => updateQrCodeWithValue(value), 500);
     }
 }
+
 function handleStartScanClick() {
     if (!window.html5QrCodeScanner || window.html5QrCodeScanner.getState() !== 2 ) {
         startQrScanner();
@@ -1541,6 +1594,7 @@ function handleStartScanClick() {
         console.warn("Scan button clicked but already scanning or scanner not ready.");
     }
 }
+
 function startQrScanner() {
     console.log("Starting QR scanner to add a friend...");
     if (window.html5QrCodeScanner && window.html5QrCodeScanner.getState() === 2 ) {
@@ -1551,8 +1605,10 @@ function startQrScanner() {
         console.warn("QR Reader element not available for start.");
         return;
     }
+
     if(startScanButton) startScanButton.disabled = true;
     qrReaderElement.style.display = 'block';
+
     if (typeof Html5Qrcode !== 'undefined') {
         try {
             if (window.html5QrCodeScanner && typeof window.html5QrCodeScanner.getState === 'function') {
@@ -1564,6 +1620,7 @@ function startQrScanner() {
                 window.html5QrCodeScanner.clear().catch(e => console.warn("Ignoring error clearing previous scanner:", e));
             }
         } catch (e) { console.warn("Error accessing previous scanner state:", e); }
+
         try {
             window.html5QrCodeScanner = new Html5Qrcode("qr-reader");
         } catch (e) {
@@ -1573,9 +1630,11 @@ function startQrScanner() {
             if(startScanButton) startScanButton.disabled = false;
             return;
         }
+
         const qrCodeSuccessCallback = (decodedText, decodedResult) => {
             console.log(`QR Scan success: ${decodedText ? decodedText.substring(0, 50) + '...' : ''}`);
             updateStatus('QR Scan successful. Processing...', 'blue');
+
             window.html5QrCodeScanner.stop().then(ignore => {
                 console.log("QR Scanner stopped after success.");
                 if(qrReaderElement) qrReaderElement.style.display = 'none';
@@ -1589,6 +1648,7 @@ function startQrScanner() {
             });
         };
         const config = { fps: 10, qrbox: { width: 200, height: 200 } };
+
         console.log("Starting QR scanner...");
         window.html5QrCodeScanner.start({ facingMode: "environment" }, config, qrCodeSuccessCallback)
             .catch(err => {
@@ -1608,13 +1668,16 @@ function startQrScanner() {
         setTimeout(startQrScanner, 500);
     }
 }
+
 async function handleScannedQrData(decodedText) {
     console.log("Handling scanned data (expecting URL with friend ID):", decodedText ? decodedText.substring(0, 80) + '...' : '');
     if(startScanButton) startScanButton.disabled = false;
+
     try {
         const url = new URL(decodedText);
         const params = new URLSearchParams(url.search);
         const friendId = params.get('id');
+
         if (friendId) {
             console.log("Found friend ID in scanned URL:", friendId);
             await addFriend(friendId);
@@ -1638,9 +1701,11 @@ async function handleScannedQrData(decodedText) {
         }
     }
 }
+
 function handleCallFriendClick(event) {
     const friendId = event.target.dataset.friendId;
     if (!friendId) return;
+
     if (!signalingSocket || signalingSocket.readyState !== WebSocket.OPEN) {
         alert("Not connected to signaling server. Please wait or refresh.");
         return;
@@ -1649,53 +1714,65 @@ function handleCallFriendClick(event) {
         alert("Already in a call or connecting.");
         return;
     }
+
     console.log(`Attempting to call friend: ${friendId}`);
     updateStatus(`Calling ${friendId.substring(0, 6)}...`, 'blue');
     setInteractionUiEnabled(false);
     displayFriendList();
+
     sendSignalingMessage({
         type: 'call-request',
         payload: { target: friendId }
     });
 }
+
 function handleIncomingCall(callerId) {
     if (currentAppState === AppState.CONNECTING || currentAppState === AppState.CONNECTED) {
         console.log(`Received call from ${callerId} but already busy. Sending busy signal.`);
         sendSignalingMessage({ type: 'call-busy', payload: { target: callerId } });
         return;
     }
+
     currentCallerId = callerId;
     if (callerIdElement) callerIdElement.textContent = callerId.substring(0, 8) + '...';
     if (incomingCallModal) incomingCallModal.style.display = 'block';
 }
+
 async function handleAcceptCall() {
     if (!currentCallerId) return;
     console.log(`Accepting call from ${currentCallerId}`);
     if (incomingCallModal) incomingCallModal.style.display = 'none';
     updateStatus(`Accepting call from ${currentCallerId.substring(0,6)}. Connecting...`, 'blue');
+
     sendSignalingMessage({ type: 'call-accepted', payload: { target: currentCallerId } });
+
     await createPeerConnection(currentCallerId);
     currentAppState = AppState.CONNECTING;
 }
+
 function handleRejectCall() {
     if (!currentCallerId) return;
     console.log(`Rejecting call from ${currentCallerId}`);
     if (incomingCallModal) incomingCallModal.style.display = 'none';
+
     sendSignalingMessage({ type: 'call-rejected', payload: { target: currentCallerId } });
     currentCallerId = null;
 }
+
 async function handleCallRejected(peerId) {
     updateStatus(`Call rejected by ${peerId.substring(0, 6)}.`, 'orange');
     currentAppState = AppState.INITIAL;
     setInteractionUiEnabled(false);
     await displayFriendList();
 }
+
 async function handleCallBusy(peerId) {
     updateStatus(`Peer ${peerId.substring(0, 6)} is busy.`, 'orange');
     currentAppState = AppState.INITIAL;
     setInteractionUiEnabled(false);
     await displayFriendList();
 }
+
 function setupEventListeners() {
     window.addEventListener('resize', () => {
         if (qrElement && qrElement.style.display !== 'none') {
@@ -1703,32 +1780,16 @@ function setupEventListeners() {
             updateQrCodeWithValue(myAppUrl);
         }
     });
+
     sendMessageButton?.addEventListener('click', handleSendMessage);
     sendPostButton?.addEventListener('click', handleSendPost);
     sendFileButton?.addEventListener('click', handleSendFile);
     callButton?.addEventListener('click', toggleVideoCall);
     videoButton?.addEventListener('click', toggleLocalVideo);
     startScanButton?.addEventListener('click', handleStartScanClick);
+
     acceptCallButton?.addEventListener('click', handleAcceptCall);
     rejectCallButton?.addEventListener('click', handleRejectCall);
-
-    confirmAddFriendButton?.addEventListener('click', async () => {
-        if (pendingOfferDetails && addFriendConfirmModal) {
-            addFriendConfirmModal.style.display = 'none';
-            const { peerUUID, offerSdp, isRenegotiation } = pendingOfferDetails;
-            pendingOfferDetails = null;
-            await addFriend(peerUUID);
-            await proceedWithOffer(peerUUID, offerSdp, isRenegotiation);
-        }
-    });
-    ignoreAddFriendButton?.addEventListener('click', () => {
-        if (pendingOfferDetails && addFriendConfirmModal) {
-            addFriendConfirmModal.style.display = 'none';
-            console.log(`Ignoring connection offer from ${pendingOfferDetails.peerUUID}`);
-            closePeerConnection(pendingOfferDetails.peerUUID, true);
-            pendingOfferDetails = null;
-        }
-    });
 
     messageInputElement?.addEventListener('keypress', (e) => {
         if (e.key === 'Enter' && !sendMessageButton.disabled) handleSendMessage();
@@ -1736,33 +1797,42 @@ function setupEventListeners() {
     postInputElement?.addEventListener('keypress', (e) => {
         if (e.key === 'Enter' && !sendPostButton.disabled) handleSendPost();
     });
+
     document.addEventListener('visibilitychange', () => {
         if (document.visibilityState === 'visible') {
           console.log('App became visible. Checking WebSocket connection.');
+
           if ((!signalingSocket || signalingSocket.readyState !== WebSocket.OPEN) && !isAttemptingReconnect) {
-            console.log('[App.js Visibility] WebSocket not connected or in a bad state. Attempting to reconnect.');
+            console.log('WebSocket not connected or in a bad state upon visibility change. Attempting to reconnect.');
             updateStatus('Re-checking connection...', 'blue');
+
             if (wsReconnectTimer) {
               clearTimeout(wsReconnectTimer);
               wsReconnectTimer = null;
             }
             wsReconnectAttempts = 0;
+
             connectWebSocket();
           } else if (signalingSocket && signalingSocket.readyState === WebSocket.OPEN) {
-            console.log('[App.js Visibility] WebSocket is connected.');
+            console.log('WebSocket is connected upon visibility change.');
+
             startAutoConnectFriendsTimer();
           } else if (isAttemptingReconnect) {
-            console.log('[App.js Visibility] WebSocket reconnection attempt already in progress.');
+            console.log('WebSocket reconnection attempt already in progress upon visibility change.');
           }
         } else {
           console.log('App became hidden.');
+
           stopAutoConnectFriendsTimer();
         }
       });
+
     console.log("Event listeners set up.");
     }
+
 document.addEventListener('DOMContentLoaded', async () => {
   console.log("DOM fully loaded and parsed. Initializing app...");
+
   qrElement = document.getElementById('qrcode');
   statusElement = document.getElementById('connectionStatus');
   qrReaderElement = document.getElementById('qr-reader');
@@ -1775,10 +1845,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   callerIdElement = document.getElementById('callerId');
   acceptCallButton = document.getElementById('acceptCallButton');
   rejectCallButton = document.getElementById('rejectCallButton');
-  addFriendConfirmModal = document.getElementById('addFriendConfirmModal');
-  confirmFriendIdTextElement = document.getElementById('confirmFriendIdText');
-  confirmAddFriendButton = document.getElementById('confirmAddFriendButton');
-  ignoreAddFriendButton = document.getElementById('ignoreAddFriendButton');
   friendListElement = document.getElementById('friendList');
   messageInputElement = document.getElementById('messageInput');
   sendMessageButton = document.getElementById('sendMessage');
@@ -1792,20 +1858,27 @@ document.addEventListener('DOMContentLoaded', async () => {
   roomInputElement = document.getElementById('roomInput');
   joinRoomButton = document.getElementById('joinRoomButton');
   startScanButton = document.getElementById('startScanButton');
+
   if (!remoteVideosContainer) {
     remoteVideosContainer = document.querySelector('.video-scroll-container');
   }
+
   if (typeof idb === 'undefined') {
       updateStatus("Database features disabled (idb library not loaded).", "orange");
   } else if (!dbPromise) {
       console.error("IndexedDB could not be opened.");
       updateStatus("Database initialization failed.", "red");
   }
+
   myDeviceId = localStorage.getItem('cybernetcall-deviceId') || generateUUID();
   localStorage.setItem('cybernetcall-deviceId', myDeviceId);
   console.log("My Device ID:", myDeviceId);
+
   await displayInitialPosts();
+
   setupEventListeners();
+
+  setupEventListeners();  
   if (myDeviceId && typeof myDeviceId === 'string' && myDeviceId.length > 0) {
     const myAppUrl = window.location.origin + '/?id=' + myDeviceId;
     console.log("Generating QR code for URL:", myAppUrl);
@@ -1814,9 +1887,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     console.error("Device ID is not available. Cannot generate QR code.");
     updateStatus("Error: Device ID missing. Cannot generate QR code.", "red");
   }
+
   updateStatus('Initializing...', 'black');
   setInteractionUiEnabled(false);
+
   await displayFriendList();
+
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('/static/cnc/service-worker.js')
       .then(registration => {
@@ -1824,15 +1900,19 @@ document.addEventListener('DOMContentLoaded', async () => {
         registration.onupdatefound = () => {
           const installingWorker = registration.installing;
           if (installingWorker) {
-                let refreshing;
+                let refreshing;    
             installingWorker.onstatechange = () => {
               if (installingWorker.state === 'installed') {
                 if (navigator.serviceWorker.controller) {
+
                      console.log('New content is available and has been installed. Please refresh to update.');
+
                      if (confirm('A new version of the app is available. Refresh now to get the latest features?')) {
+
                        if (registration.waiting) {
                            registration.waiting.postMessage({ type: 'SKIP_WAITING' });
                        }
+
                        navigator.serviceWorker.addEventListener('controllerchange', () => {
                            if (refreshing) return;
                            window.location.reload();
@@ -1842,6 +1922,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                        updateStatus('New version available. Please refresh soon to update.', 'blue');
                      }
                 } else {
+
                     console.log('Content is cached for offline use.');
                 }
               }
@@ -1857,11 +1938,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     console.log("Service Worker not supported.");
     updateStatus('Offline features unavailable (Service Worker not supported)', 'orange');
   }
+
+
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.addEventListener('message', event => {
       console.log('[App.js] Message received from Service Worker:', event.data);
       if (event.data && event.data.type === 'APP_ACTIVATED') {
         console.log('[App.js] App activated message from SW. New SW:', event.data.newSW);
+
         if ((!signalingSocket || signalingSocket.readyState !== WebSocket.OPEN) && !isAttemptingReconnect) {
             console.log('[App.js SW Message] WebSocket not connected. Attempting to reconnect.');
             connectWebSocket();
@@ -1870,17 +1954,18 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
     });
   }
+
   console.log("App initialization complete.");
   await connectWebSocket();
+
   const urlParams = new URLSearchParams(window.location.search);
   const incomingFriendId = urlParams.get('id');
   if (incomingFriendId && incomingFriendId !== myDeviceId) {
       console.log(`Detected incoming friend ID from URL: ${incomingFriendId}`);
-      updateStatus(`Attempting to connect to ${incomingFriendId.substring(0,6)} from URL...`, 'blue');
+      updateStatus(`Connecting from link with ${incomingFriendId.substring(0,6)}...`, 'blue');
+      await addFriend(incomingFriendId);
       pendingConnectionFriendId = incomingFriendId;
-      if (signalingSocket && signalingSocket.readyState === WebSocket.OPEN) {
-        await createOfferForPeer(pendingConnectionFriendId);
-        pendingConnectionFriendId = null; 
-      }
   }
+
 });
+
