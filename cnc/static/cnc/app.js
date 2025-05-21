@@ -398,16 +398,15 @@ async function connectWebSocket() {
         return;
     }
     signalingSocket = null;
-    if (code === 1000 || code === 1001) {
-        console.log("WebSocket closed normally or going away. No reconnection attempt.");
+
+    if ((code === 1000 || code === 1001) && !isAttemptingReconnect) {
+        console.log(`WebSocket closed with code ${code}. No automatic reconnection attempt as it seems intentional or already handled.`);
         updateStatus('Signaling connection closed.', 'orange');
         resetConnection();
         await displayFriendList();
-        isAttemptingReconnect = false;
-        wsReconnectAttempts = 0;
         return;
       }
-      if (wsReconnectAttempts >= MAX_WS_RECONNECT_ATTEMPTS) {
+      if (wsReconnectAttempts >= MAX_WS_RECONNECT_ATTEMPTS && isAttemptingReconnect) {
         console.error('WebSocket reconnection failed after maximum attempts.');
         updateStatus('Signaling connection lost. Please refresh the page.', 'red');
         resetConnection();
@@ -416,7 +415,10 @@ async function connectWebSocket() {
         wsReconnectAttempts = 0;
         return;
       }
-      isAttemptingReconnect = true;
+      if (!isAttemptingReconnect) { // Start reconnection process if not already doing so
+        isAttemptingReconnect = true;
+        wsReconnectAttempts = 0; // Reset attempts when starting a new reconnection sequence
+      }
       wsReconnectAttempts++;
       let delay = INITIAL_WS_RECONNECT_DELAY_MS * Math.pow(1.5, wsReconnectAttempts - 1);
       delay = Math.min(delay, MAX_WS_RECONNECT_DELAY_MS);
