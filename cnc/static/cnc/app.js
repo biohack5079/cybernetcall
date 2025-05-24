@@ -596,7 +596,21 @@ async function createPeerConnection(peerUUID) {
   console.log(`Creating PeerConnection for ${peerUUID}...`);
   try {
     const peer = new RTCPeerConnection({
-      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+      iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        // 以下にTURNサーバーの設定を追加します。
+        // 例:
+        // {
+        //   urls: 'turn:your-turn-server.example.com:3478',
+        //   username: 'your-turn-username',
+        //   credential: 'your-turn-password'
+        // },
+        // {
+        //   urls: 'turns:your-turn-server.example.com:443?transport=tcp', // 暗号化されたTURN (TLS経由)
+        //   username: 'your-turn-username',
+        //   credential: 'your-turn-password'
+        // }
+      ]
     });
     peer.onicecandidate = event => {
       if (event.candidate) {
@@ -1303,7 +1317,7 @@ function handleSendFile() {
              sendFileButton.disabled = false;
         }
     };
-    const sendFileChunk = (chunkDataAsArrayBuffer, originalFileName, originalFileSizeInLogic, currentFileId, currentChunkIndex, currentOffset, retryCount = 0) => {
+    const sendFileChunk = async (chunkDataAsArrayBuffer, originalFileName, originalFileSizeInLogic, currentFileId, currentChunkIndex, currentOffset, retryCount = 0) => {
          try {
             const chunkMetaMessage = {
                  type: 'file-chunk',
@@ -1349,6 +1363,7 @@ function handleSendFile() {
              } else {
                  alert(`Failed to send chunk ${currentChunkIndex} after multiple retries.`);
                  if (fileTransferStatusElement) fileTransferStatusElement.innerHTML = DOMPurify.sanitize('Chunk send error');
+                 await cleanupFileTransferData(currentFileId, await dbPromise);
                  sendFileButton.disabled = false;
              }
          }
