@@ -15,7 +15,7 @@ let messageInputElement, sendMessageButton, postInputElement, sendPostButton;
 let fileInputElement, sendFileButton, fileTransferStatusElement;
 let callButton, videoButton;
 let startScanButton;
-let roomInputElement, joinRoomButton;
+// let roomInputElement, joinRoomButton;
 let remoteVideosContainer;
 let incomingCallModal, callerIdElement, acceptCallButton, rejectCallButton;
 let currentCallerId = null;
@@ -82,7 +82,7 @@ function setInteractionUiEnabled(enabled) {
     if (sendFileButton) sendFileButton.disabled = disabled;
     if (callButton) callButton.disabled = disabled;
     if (videoButton) videoButton.disabled = disabled;
-    if (joinRoomButton) joinRoomButton.disabled = (currentAppState !== AppState.INITIAL);
+    // if (joinRoomButton) joinRoomButton.disabled = (currentAppState !== AppState.INITIAL);
 }
 async function savePost(post) {
   if (!dbPromise) return;
@@ -817,8 +817,8 @@ function resetConnection() {
     currentCallerId = null;
     if (incomingCallModal) incomingCallModal.style.display = 'none';
     if(qrReaderElement) qrReaderElement.style.display = 'none';
-    if(roomInputElement) roomInputElement.disabled = true;
-    if(joinRoomButton) joinRoomButton.disabled = true;
+    // if(roomInputElement) roomInputElement.disabled = true;
+    // if(joinRoomButton) joinRoomButton.disabled = true;
     if(startScanButton) startScanButton.disabled = false;
     updateStatus('Ready. Add friends or wait for connection.', 'black');
     setInteractionUiEnabled(false);
@@ -1559,8 +1559,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   fileTransferStatusElement = document.getElementById('file-transfer-status');
   callButton = document.getElementById('callButton');
   videoButton = document.getElementById('videoButton');
-  roomInputElement = document.getElementById('roomInput');
-  joinRoomButton = document.getElementById('joinRoomButton');
+//   roomInputElement = document.getElementById('roomInput');
+//   joinRoomButton = document.getElementById('joinRoomButton');
   startScanButton = document.getElementById('startScanButton');
   if (!remoteVideosContainer) {
     remoteVideosContainer = document.querySelector('.video-scroll-container');
