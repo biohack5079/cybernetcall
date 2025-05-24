@@ -65,6 +65,34 @@ function generateUUID() {
     return v.toString(16);
   });
 }
+
+/**
+ * テキスト内のURLとメールアドレスを検出し、クリック可能なリンクに変換します。
+ * @param {string} text 変換するテキスト。
+ * @returns {string} リンクが埋め込まれたHTML文字列。
+ */
+function linkify(text) {
+    if (!text) return '';
+
+    // URLを検出する正規表現 (http, https, ftp, wwwから始まるもの)
+    const urlPattern = /(\b(https?|ftp):\/\/[-A-Z0-9+&@#\/%?=~_|!:,.;]*[-A-Z0-9+&@#\/%=~_|])|(\bwww\.[-A-Z0-9+&@#\/%?=~_|!:,.;]*[-A-Z0-9+&@#\/%=~_|])/ig;
+    text = text.replace(urlPattern, function(url) {
+        let fullUrl = url;
+        if (!url.match(/^https?:\/\//i) && url.startsWith('www.')) {
+            fullUrl = 'http://' + url; // www. から始まる場合は http:// を補完
+        }
+        return `<a href="${fullUrl}" target="_blank" rel="noopener noreferrer">${url}</a>`;
+    });
+
+    // メールアドレスを検出する正規表現
+    const emailPattern = /([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9._-]+)/gi;
+    text = text.replace(emailPattern, function(email) {
+        return `<a href="mailto:${email}">${email}</a>`;
+    });
+
+    return text;
+}
+
 function updateStatus(message, color = 'black') {
     if (statusElement) {
         statusElement.textContent = message;
@@ -166,8 +194,9 @@ function displayPost(post, isNew = true) {
   div.className = 'post';
   div.id = `post-${post.id}`;
   const contentSpan = document.createElement('span');
-  const unsafeHTML = `<strong>${post.sender ? post.sender.substring(0, 6) : 'Unknown'}:</strong> ${post.content}`;
-  contentSpan.innerHTML = DOMPurify.sanitize(unsafeHTML);
+  // 投稿内容をlinkifyで処理
+  const linkedContent = linkify(post.content);
+  contentSpan.innerHTML = DOMPurify.sanitize(`<strong>${post.sender ? post.sender.substring(0, 6) : 'Unknown'}:</strong> ${linkedContent}`);
   const deleteButton = document.createElement('button');
   deleteButton.textContent = '❌';
   deleteButton.className = 'delete-post-button';
@@ -1067,8 +1096,9 @@ function displayDirectMessage(message, isOwnMessage = false, senderUUID = null) 
     } else if (message.sender) {
         senderName = `Peer (${message.sender.substring(0, 6)})`;
     }
-    const unsafeHTML = `<strong>${senderName}:</strong> ${message.content}`;
-    div.innerHTML = DOMPurify.sanitize(unsafeHTML);
+    // ダイレクトメッセージ内容をlinkifyで処理
+    const linkedContent = linkify(message.content);
+    div.innerHTML = DOMPurify.sanitize(`<strong>${senderName}:</strong> ${linkedContent}`);
     messageAreaElement.appendChild(div);
     messageAreaElement.scrollTop = messageAreaElement.scrollHeight;
 }
