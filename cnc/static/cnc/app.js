@@ -15,7 +15,6 @@ let messageInputElement, sendMessageButton, postInputElement, sendPostButton;
 let fileInputElement, sendFileButton, fileTransferStatusElement;
 let callButton, videoButton;
 let startScanButton;
-// let roomInputElement, joinRoomButton;
 let remoteVideosContainer;
 let incomingCallModal, callerIdElement, acceptCallButton, rejectCallButton;
 let currentCallerId = null;
@@ -34,7 +33,7 @@ const INITIAL_PEER_RECONNECT_DELAY_MS = 2000;
 let peerNegotiationTimers = {};
 const NEGOTIATION_TIMEOUT_MS = 3000;
 let wsReconnectAttempts = 0;
-const MAX_WS_RECONNECT_ATTEMPTS = 5;
+const MAX_WS_RECONNECT_ATTEMPTS = 10;
 const INITIAL_WS_RECONNECT_DELAY_MS = 2000;
 const MAX_WS_RECONNECT_DELAY_MS = 5000;
 let wsReconnectTimer = null;
@@ -66,25 +65,20 @@ function generateUUID() {
   });
 }
 
-/**
- * テキスト内のURLとメールアドレスを検出し、クリック可能なリンクに変換します。
- * @param {string} text 変換するテキスト。
- * @returns {string} リンクが埋め込まれたHTML文字列。
- */
+
 function linkify(text) {
     if (!text) return '';
 
-    // URLを検出する正規表現 (http, https, ftp, wwwから始まるもの)
+
     const urlPattern = /(\b(https?|ftp):\/\/[-A-Z0-9+&@#\/%?=~_|!:,.;]*[-A-Z0-9+&@#\/%=~_|])|(\bwww\.[-A-Z0-9+&@#\/%?=~_|!:,.;]*[-A-Z0-9+&@#\/%=~_|])/ig;
     text = text.replace(urlPattern, function(url) {
         let fullUrl = url;
         if (!url.match(/^https?:\/\//i) && url.startsWith('www.')) {
-            fullUrl = 'http://' + url; // www. から始まる場合は http:// を補完
+            fullUrl = 'http://' + url;
         }
         return `<a href="${fullUrl}" target="_blank" rel="noopener noreferrer">${url}</a>`;
     });
 
-    // メールアドレスを検出する正規表現
     const emailPattern = /([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9._-]+)/gi;
     text = text.replace(emailPattern, function(email) {
         return `<a href="mailto:${email}">${email}</a>`;
@@ -110,7 +104,7 @@ function setInteractionUiEnabled(enabled) {
     if (sendFileButton) sendFileButton.disabled = disabled;
     if (callButton) callButton.disabled = disabled;
     if (videoButton) videoButton.disabled = disabled;
-    // if (joinRoomButton) joinRoomButton.disabled = (currentAppState !== AppState.INITIAL);
+
 }
 async function savePost(post) {
   if (!dbPromise) return;
@@ -194,7 +188,6 @@ function displayPost(post, isNew = true) {
   div.className = 'post';
   div.id = `post-${post.id}`;
   const contentSpan = document.createElement('span');
-  // 投稿内容をlinkifyで処理
   const linkedContent = linkify(post.content);
   contentSpan.innerHTML = DOMPurify.sanitize(`<strong>${post.sender ? post.sender.substring(0, 6) : 'Unknown'}:</strong> ${linkedContent}`);
   const deleteButton = document.createElement('button');
@@ -401,9 +394,9 @@ async function connectWebSocket() {
         wsReconnectAttempts = 0;
         return;
       }
-      if (!isAttemptingReconnect) { // Start reconnection process if not already doing so
+      if (!isAttemptingReconnect) {
         isAttemptingReconnect = true;
-        wsReconnectAttempts = 0; // Reset attempts when starting a new reconnection sequence
+        wsReconnectAttempts = 0;
       }
       wsReconnectAttempts++;
       let delay = INITIAL_WS_RECONNECT_DELAY_MS * Math.pow(1.5, wsReconnectAttempts - 1);
@@ -846,8 +839,6 @@ function resetConnection() {
     currentCallerId = null;
     if (incomingCallModal) incomingCallModal.style.display = 'none';
     if(qrReaderElement) qrReaderElement.style.display = 'none';
-    // if(roomInputElement) roomInputElement.disabled = true;
-    // if(joinRoomButton) joinRoomButton.disabled = true;
     if(startScanButton) startScanButton.disabled = false;
     updateStatus('Ready. Add friends or wait for connection.', 'black');
     setInteractionUiEnabled(false);
@@ -1096,7 +1087,6 @@ function displayDirectMessage(message, isOwnMessage = false, senderUUID = null) 
     } else if (message.sender) {
         senderName = `Peer (${message.sender.substring(0, 6)})`;
     }
-    // ダイレクトメッセージ内容をlinkifyで処理
     const linkedContent = linkify(message.content);
     div.innerHTML = DOMPurify.sanitize(`<strong>${senderName}:</strong> ${linkedContent}`);
     messageAreaElement.appendChild(div);
@@ -1589,8 +1579,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   fileTransferStatusElement = document.getElementById('file-transfer-status');
   callButton = document.getElementById('callButton');
   videoButton = document.getElementById('videoButton');
-//   roomInputElement = document.getElementById('roomInput');
-//   joinRoomButton = document.getElementById('joinRoomButton');
   startScanButton = document.getElementById('startScanButton');
   if (!remoteVideosContainer) {
     remoteVideosContainer = document.querySelector('.video-scroll-container');
