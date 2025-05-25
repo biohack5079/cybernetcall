@@ -19,7 +19,7 @@ const urlsToCache = [
   'https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.8/purify.min.js',
   'https://cdnjs.cloudflare.com/ajax/libs/qrious/4.0.2/qrious.min.js',
   'https://unpkg.com/idb@7/build/umd.js',
-  'https://unpkg.com/html5-qrcode' // Note:unpkg might redirect, consider specific version URL if issues arise
+  'https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js' // Specific version for better cache stability
 ];
 
 // Event listener for the 'install' event
