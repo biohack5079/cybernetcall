@@ -147,20 +147,33 @@ button:disabled {
 }
 
 #connectionStatus {
-  max-height: 20px; /* 表示したい最大の高さ（例: 4-5行分程度）を指定 */
+  display: none; /* 初期状態は非表示。JSで表示を制御 */
+  font-weight: bold;
+  max-height: 25px; /* 通常時の最大の高さ */
   overflow-y: scroll;  /* 常に縦スクロールバーを表示 */
-  border: 1px solid #ddd; /* 見やすくするための境界線 */
-  padding: 0.75rem;          /* 内側の余白 */
-  margin-bottom: 1rem;   /* 他の要素との間隔 */
-  background-color: #f9f9f9; /* 背景色 */
-  border-radius: 4px;      /* 角丸 */
-  font-size: 0.9em;      /* 文字サイズ */
-  line-height: 1.4;      /* 行の高さ */
+  border: 1px solid #ccc;
+  padding: 0.75rem;
+  margin-bottom: 1rem;
+  background-color: #f9f9f9;
+  border-radius: 4px;
+  font-size: 0.9em;
+  line-height: 1.4;
+  width: 90%; /* 画面幅に対する割合 */
+  max-width: 600px; /* 最大幅を指定 */
+  margin-left: auto; /* 中央揃え */
+  margin-right: auto; /* 中央揃え */
+  box-sizing: border-box; /* paddingとborderをwidthに含める */
+  cursor: pointer; /* クリック可能であることを示すカーソル */
+  transition: max-height 0.3s ease-in-out; /* スムーズな高さ変更アニメーション */
 }
 
-/* Individual status message lines within #connectionStatus */
+#connectionStatus.status-expanded {
+  max-height: 1000px; /* 拡大時の最大の高さ */
+}
+
+/* ステータスメッセージの各行のスタイル */
 #connectionStatus > div {
-  white-space: pre-line; /* Allow \n to create line breaks for two-line messages */
+  white-space: pre-line; /* \n で改行できるようにする */
 }
 
 /* Video Meeting Styles */

@@ -1620,6 +1620,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (!remoteVideosContainer) {
     remoteVideosContainer = document.querySelector('.video-scroll-container');
   }
+  if (statusElement) {
+    statusElement.addEventListener('click', () => {
+      statusElement.classList.toggle('status-expanded');
+    });
+  }
+
   if (typeof idb === 'undefined') {
       updateStatus("Database features disabled (idb library not loaded).", "orange");
   } else if (!dbPromise) {
