@@ -58,6 +58,9 @@ let dbPromise = typeof idb !== 'undefined' ? idb.openDB(DB_NAME, DB_VERSION, {
 }) : null;
 if (!dbPromise) {
 }
+let statusMessages = [];
+const MAX_STATUS_MESSAGES = 10;
+
 function generateUUID() {
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
     let r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
@@ -87,13 +90,47 @@ function linkify(text) {
     return text;
 }
 
-function updateStatus(message, color = 'black') {
-    if (statusElement) {
-        statusElement.textContent = message;
-        statusElement.style.color = color;
-        statusElement.style.display = message ? 'block' : 'none';
-    }
+function renderStatusMessages() {
+    if (!statusElement) return;
+    statusElement.innerHTML = '';
+    // statusMessages は unshift で追加しているので、そのままの順で表示すると新しいものが上に来る
+    statusMessages.forEach(msgObj => {
+        const div = document.createElement('div');
+        div.textContent = msgObj.text;
+        div.style.color = msgObj.color;
+        statusElement.appendChild(div);
+    });
+    statusElement.style.display = statusMessages.length > 0 ? 'block' : 'none';
+    // 必要であれば、常に一番下にスクロールする (新しいメッセージが下に追加される場合)
+    // statusElement.scrollTop = statusElement.scrollHeight;
 }
+
+function updateStatus(message, color = 'black') {
+    if (!statusElement) return;
+
+    const messageText = String(message || '');
+
+    // 明示的に空のメッセージが指定された場合は、全てのステータスをクリアする
+    if (messageText === '') {
+        statusMessages = [];
+        renderStatusMessages();
+        return;
+    }
+    const newMessage = {
+        id: generateUUID(), // メッセージごとのユニークID
+        text: messageText,
+        color: color,
+        timestamp: new Date() // タイムスタンプを追加
+    };
+    statusMessages.unshift(newMessage); // 新しいメッセージを配列の先頭に追加
+
+    if (statusMessages.length > MAX_STATUS_MESSAGES) {
+        statusMessages.length = MAX_STATUS_MESSAGES; // 配列の末尾 (古いメッセージ) から削除
+    }
+    renderStatusMessages();
+}
+
+
 function setInteractionUiEnabled(enabled) {
     const disabled = !enabled;
     if (messageInputElement) messageInputElement.disabled = disabled;
@@ -1653,5 +1690,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       updateStatus(`Connecting from link with ${incomingFriendId.substring(0,6)}...`, 'blue');
       await addFriend(incomingFriendId);
       pendingConnectionFriendId = incomingFriendId;
-  }
+
+    }
+
 });
