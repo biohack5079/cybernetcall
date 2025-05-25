@@ -15,7 +15,8 @@ class SignalingConsumer(AsyncWebsocketConsumer):
     async def disconnect(self, close_code):
         logger.info(f"WebSocket connection closed for {self.channel_name} (UUID: {self.user_uuid}), code: {close_code}")
         if self.user_uuid and self.user_uuid in user_uuid_to_channel:
-            del user_uuid_to_channel[self.user_uuid]
+            if self.user_uuid in user_uuid_to_channel:
+                del user_uuid_to_channel[self.user_uuid]
             logger.info(f"Removed user {self.user_uuid} from tracking.")
 
             await self.broadcast({
