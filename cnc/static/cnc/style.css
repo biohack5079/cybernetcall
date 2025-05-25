@@ -147,7 +147,7 @@ button:disabled {
 }
 
 #connectionStatus {
-  max-height: 10px; /* 表示したい最大の高さ（例: 4-5行分程度）を指定 */
+  max-height: 20px; /* 表示したい最大の高さ（例: 4-5行分程度）を指定 */
   overflow-y: scroll;  /* 常に縦スクロールバーを表示 */
   border: 1px solid #ddd; /* 見やすくするための境界線 */
   padding: 0.75rem;          /* 内側の余白 */

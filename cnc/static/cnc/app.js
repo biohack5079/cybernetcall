@@ -59,7 +59,7 @@ let dbPromise = typeof idb !== 'undefined' ? idb.openDB(DB_NAME, DB_VERSION, {
 if (!dbPromise) {
 }
 let statusMessages = [];
-const MAX_STATUS_MESSAGES = 10;
+const MAX_STATUS_MESSAGES = 1000;
 
 function generateUUID() {
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
