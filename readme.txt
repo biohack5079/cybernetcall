@@ -1,9 +1,48 @@
+python3 -m venv myvenv
 source myvenv/bin/activate
 pip3 install -r requirements.txt
 python3 manage.py runserver
 ngrok http 8000
 
+###  Git Credential Helperでキャッシュ
+git config --global credential.helper store
+
+### renderで設定
+    buildCommand: './build.sh'
+    startCommand: 'daphne -b 0.0.0.0 -p 10000 cybernetcall.asgi:application'
+    .env内容を設定
+    REDIS_URLを設定
+    render.yamlの編集
+
+### push
 git add .
 git commit -m "change"
 git push -u origin main
+
+
+### 再migration
+# cnc/migrations/ ディレクトリに移動
+cd cnc/migrations/
+# __init__.py 以外のすべてのファイルを削除
+find . -type f -not -name '__init__.py' -delete
+# 元のディレクトリに戻る
+cd ../../
+
+python3 manage.py makemigrations cnc
+python3 manage.py migrate
+python3 manage.py createsuperuser
+
+
+カード番号	4242 4242 4242 4242
+有効期限	未来の日付であれば何でも構いません (例: 12 / 30)
+CVC	任意の3桁の数字 (例: 123)
+
+### ngrok
+# DATABASE_URL
+DEBUG = env.bool('DJANGO_DEBUG', default=False)
+DEBUG = env.bool('DJANGO_DEBUG', default=True)
+
+### Start Command
+ python manage.py migrate && daphne -b 0.0.0.0 -p 10000 cybernetcall.asgi:application
+
 

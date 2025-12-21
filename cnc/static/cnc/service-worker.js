@@ -15,6 +15,7 @@ const urlsToCache = [
   '/static/cnc/icons/icon-192x192.png',
   '/static/cnc/icons/icon-512x512.png',
   '/static/cnc/icons/icon-maskable-512x512.png', // Also cache maskable icon
+  '/static/cnc/notification.mp3', // 通知音ファイルをキャッシュに追加
   // External libraries loaded from CDNs in index.html
   'https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.8/purify.min.js',
   'https://cdnjs.cloudflare.com/ajax/libs/qrious/4.0.2/qrious.min.js',
@@ -61,17 +62,7 @@ self.addEventListener('activate', event => {
       }))
     ).then(() => {
       // Take control of uncontrolled clients (pages) immediately
-      console.log('[Service Worker] Claiming clients');
-      return self.clients.claim().then(() => {
-        // After claiming clients, send a message to all controlled clients
-        // This can be used by the app to know a new SW is active or app was launched
-        self.clients.matchAll().then(clients => {
-          clients.forEach(client => {
-            console.log('[Service Worker] Sending APP_ACTIVATED message to client:', client.id);
-            client.postMessage({ type: 'APP_ACTIVATED', newSW: true });
-          });
-        });
-      });
+      return self.clients.claim();
     })
   );
 });
@@ -87,50 +78,99 @@ self.addEventListener('message', event => {
 
 // Event listener for the 'fetch' event (intercepting network requests)
 self.addEventListener('fetch', event => {
-  const requestUrl = new URL(event.request.url);
-
-  // Apply Stale-While-Revalidate strategy for app.js
-  if (requestUrl.pathname === '/static/cnc/app.js') {
-    // console.log('[Service Worker] Applying Stale-While-Revalidate for:', event.request.url);
+  // Use a "Network falling back to cache" strategy for navigation requests.
+  if (event.request.mode === 'navigate') {
     event.respondWith(
-      caches.open(CACHE_NAME).then(cache => {
-        return cache.match(event.request).then(cachedResponse => {
-          const fetchPromise = fetch(event.request).then(networkResponse => {
-            if (networkResponse && networkResponse.ok) {
-              // console.log('[Service Worker] SWR: Caching new version of', event.request.url);
-              cache.put(event.request, networkResponse.clone());
-            } else if (networkResponse) {
-              // console.warn('[Service Worker] SWR: Network request failed or not ok for', event.request.url, networkResponse.status);
-            } else {
-              // console.warn('[Service Worker] SWR: Network request completely failed for', event.request.url);
-            }
-            return networkResponse;
-          }).catch(error => {
-            // console.error('[Service Worker] SWR: Fetch error for', event.request.url, error);
-            // If network fails, and there's a cached response, it will be used.
-            // If no cached response, this will lead to an error for the client.
-            return undefined; 
-          });
-          // Return cached response if available, otherwise wait for fetchPromise
-          return cachedResponse || fetchPromise;
-        });
-      })
+      fetch(event.request).catch(() => caches.match(event.request))
     );
-  } else {
-    // For all other resources, use Network falling back to cache strategy
-    // console.log('[Service Worker] Applying Network falling back to cache for:', event.request.url);
-    event.respondWith(
-      fetch(event.request)
-        .catch(() => {
-          // console.log('[Service Worker] Network failed, trying cache for:', event.request.url);
-          return caches.match(event.request).then(cachedResponse => {
-            // if (!cachedResponse) {
-            //   console.log('[Service Worker] Not found in cache:', event.request.url);
-            // }
-            return cachedResponse;
-          });
-        })
-    );
+    return;
   }
+
+  // For all other requests (JS, CSS, images, etc.), use a "Cache first" strategy.
+  event.respondWith(
+    caches.match(event.request).then(response => {
+      return response || fetch(event.request);
+    })
+  );
 });
 
+// --- Push通知のイベントリスナーを追加 ---
+
+// Push通知を受信したときに発火
+self.addEventListener('push', event => {
+  console.log('[Service Worker] Push Received.');
+
+  let data = { title: 'CyberNetCall', body: 'You have a new message.' };
+  if (event.data) {
+    try {
+      data = event.data.json();
+    } catch (e) {
+      console.error('[Service Worker] Push event data is not valid JSON.', e);
+      // フォールバックとしてテキストを試す
+      data = { title: 'CyberNetCall', body: event.data.text() };
+    }
+  }
+
+  const title = data.title || 'CyberNetCall';
+  let options = {
+    body: data.body,
+    icon: '/static/cnc/icons/icon-192x192.png',
+    badge: '/static/cnc/icons/icon-192x192.png',
+    sound: '/static/cnc/notification.mp3',
+    vibrate: [200, 100, 200],
+    data: {
+        url: '/' // デフォルトのURL
+    }
+  };
+
+  // 「紫の足跡」タイプの通知を処理
+  if (data.type === 'friend_online' && data.friendId) {
+    options.body = `Friend ${data.friendId.substring(0, 8)}... is now online!`;
+    options.actions = [
+      { action: 'chat', title: 'Chat' }
+    ];
+    options.data.url = `/?friendId=${data.friendId}&action=chat`;
+  }
+
+  const promiseChain = self.registration.showNotification(title, options)
+    .then(() => {
+      // バッジAPIをサポートしているか確認
+      if ('setAppBadge' in self.navigator) {
+        // ここでは単純に1を設定していますが、本来はサーバーから未読件数を取得するなど、
+        // より動的なカウント管理が望ましいです。
+        return self.navigator.setAppBadge(1);
+      }
+    });
+  event.waitUntil(promiseChain);
+});
+
+// ユーザーが通知をクリックしたときに発火
+self.addEventListener('notificationclick', event => {
+  console.log('[Service Worker] Notification click Received.');
+  event.notification.close();
+
+  // 通知データからURLを取得、なければデフォルトURL
+  const urlToOpen = event.notification.data && event.notification.data.url ? event.notification.data.url : '/';
+
+  event.waitUntil(
+    clients.matchAll({
+      type: "window",
+      includeUncontrolled: true
+    }).then((clientList) => {
+      // アプリのウィンドウが既に開いているか確認
+      for (const client of clientList) {
+        // 同じオリジンのウィンドウがあれば、そこにフォーカスしてナビゲートする
+        if (client.url.startsWith(self.location.origin)) {
+          if (client.navigate) {
+            // client.navigateはPromiseを返すので、それをチェーンする
+            return client.navigate(urlToOpen).then(c => c.focus());
+          }
+        }
+      }
+      // 開いているウィンドウがなければ、新しいウィンドウを開く
+      if (clients.openWindow) {
+        return clients.openWindow(urlToOpen);
+      }
+    })
+  );
+});

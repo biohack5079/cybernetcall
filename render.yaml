@@ -6,12 +6,19 @@ databases:
     user: django_user
 
 services:
+  - type: redis
+    name: cybernetcall-redis
+    region: singapore
+    plan: free
+    maxmemoryPolicy: allkeys-lfu
+
   - type: web
     name: cybernetcall
     env: python
     region: singapore
     buildCommand: './build.sh'
-    startCommand: 'daphne -b 0.0.0.0 -p 10000 cybernetcall.asgi:application'
+    startCommand: 'python manage.py migrate && daphne -b 0.0.0.0 -p 10000 cybernetcall.asgi:application'
+
     plan: free
     branch: main
     healthCheckPath: /
@@ -22,6 +29,10 @@ services:
         fromDatabase:
           name: cybernetcall_db
           property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: cybernetcall-redis
       - key: SECRET_KEY
         generateValue: true
       - key: WEB_CONCURRENCY

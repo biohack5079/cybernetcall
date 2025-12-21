@@ -13,18 +13,23 @@ let currentAppState = AppState.INITIAL;
 let qrElement, statusElement, qrReaderElement, qrResultsElement, localVideoElement, remoteVideoElement, messageAreaElement, postAreaElement;
 let messageInputElement, sendMessageButton, postInputElement, sendPostButton;
 let fileInputElement, sendFileButton, fileTransferStatusElement;
-let callButton, videoButton;
-let startScanButton;
-let remoteVideosContainer;
+let onlineFriendSelector;
+let callButton, frontCamButton, backCamButton, startScanButton;let remoteVideosContainer;
 let incomingCallModal, callerIdElement, acceptCallButton, rejectCallButton;
 let currentCallerId = null;
 let friendListElement;
 let pendingConnectionFriendId = null;
+let selectedPeerId = null; // 1-on-1チャットの相手
 let receivedSize = {};
 let incomingFileInfo = {};
 let lastReceivedFileChunkMeta = {};
 let onlineFriendsCache = new Set();
+let offlineActivityCache = new Set();
+let isSubscribed = false; // ユーザーの課金状態を保持
 let autoConnectFriendsTimer = null;
+let currentFacingMode = 'user'; // 現在のカメラ向き(user: 前面, environment: 背面)
+let html5QrCode = null; // QRコードスキャナのインスタンスを保持
+let isScanning = false; // スキャン中かどうかのフラグ
 const AUTO_CONNECT_INTERVAL = 2000;
 let peerReconnectInfo = {};
 let iceCandidateQueue = {};
@@ -35,6 +40,43 @@ const NEGOTIATION_TIMEOUT_MS = 3000;
 let wsReconnectAttempts = 0;
 const MAX_WS_RECONNECT_ATTEMPTS = 10;
 const INITIAL_WS_RECONNECT_DELAY_MS = 2000;
+
+// i18n (Internationalization) support
+const i18n = {
+    en: {
+        friends: "Friends",
+        noFriends: "No friends added yet. Scan their QR code!",
+        onlineNow: "Online now!",
+        wasOnline: "Was online",
+        lastSeen: "Last seen",
+        offline: "Offline",
+        onlineSince: "Online since",
+        justNow: "Just now",
+        call: "Call",
+        missedCallFrom: "Missed call from",
+        at: "at",
+        freeTrial: "Free Trial",
+    },
+    ja: {
+        friends: "友達",
+        noFriends: "まだ友達がいません。QRコードをスキャンしてください！",
+        onlineNow: "オンライン",
+        wasOnline: "不在着信",
+        lastSeen: "最終接続",
+        offline: "オフライン",
+        onlineSince: "接続",
+        justNow: "たった今",
+        call: "通話",
+        missedCallFrom: "不在着信 from",
+        at: "at", // 必要に応じて変更
+        freeTrial: "無料期間",
+    }
+};
+
+function getLang() {
+    return navigator.language.startsWith('ja') ? 'ja' : 'en';
+}
+
 const MAX_WS_RECONNECT_DELAY_MS = 5000;
 let wsReconnectTimer = null;
 let isAttemptingReconnect = false;
@@ -93,19 +135,28 @@ function linkify(text) {
 function renderStatusMessages() {
     if (!statusElement) return;
     statusElement.innerHTML = '';
-    // statusMessages は unshift で追加しているので、そのままの順で表示すると新しいものが上に来る
-    statusMessages.forEach(msgObj => {
+    // 紫色のメッセージを最優先し、それ以外は新しい順にソートする
+    const sortedMessages = [...statusMessages].sort((a, b) => {
+        const aIsPriority = a.color === 'purple';
+        const bIsPriority = b.color === 'purple';
+
+        if (aIsPriority && !bIsPriority) return -1; // a (purple) を先に
+        if (!aIsPriority && bIsPriority) return 1;  // b (purple) を先に
+
+        // 同じ優先度の場合は、新しいものが上に来るようにタイムスタンプで降順ソート
+        return b.timestamp - a.timestamp;
+    });
+
+    sortedMessages.forEach(msgObj => {
         const div = document.createElement('div');
         div.textContent = msgObj.text;
         div.style.color = msgObj.color;
         statusElement.appendChild(div);
     });
     statusElement.style.display = statusMessages.length > 0 ? 'block' : 'none';
-    // 必要であれば、常に一番下にスクロールする (新しいメッセージが下に追加される場合)
-    // statusElement.scrollTop = statusElement.scrollHeight;
 }
 
-function updateStatus(message, color = 'black') {
+function updateStatus(message, color = 'black', withTimestamp = true) {
     if (!statusElement) return;
 
     const messageText = String(message || '');
@@ -116,9 +167,19 @@ function updateStatus(message, color = 'black') {
         renderStatusMessages();
         return;
     }
+
+    // タイムスタンプ付きのメッセージを生成
+    const timestamp = new Date();
+    const displayMessage = withTimestamp ? `[${timestamp.toLocaleTimeString()}] ${messageText}` : messageText;
+
+    // 同じ内容のメッセージが直近にあれば追加しない
+    if (statusMessages.length > 0 && statusMessages[0].text.endsWith(messageText)) {
+        renderStatusMessages();
+        return;
+    }
     const newMessage = {
         id: generateUUID(), // メッセージごとのユニークID
-        text: messageText,
+        text: displayMessage,
         color: color,
         timestamp: new Date() // タイムスタンプを追加
     };
@@ -138,10 +199,14 @@ function setInteractionUiEnabled(enabled) {
     if (postInputElement) postInputElement.disabled = disabled;
     if (sendPostButton) sendPostButton.disabled = disabled;
     if (fileInputElement) fileInputElement.disabled = disabled;
+    if (onlineFriendSelector) onlineFriendSelector.disabled = disabled;
     if (sendFileButton) sendFileButton.disabled = disabled;
     if (callButton) callButton.disabled = disabled;
-    if (videoButton) videoButton.disabled = disabled;
-
+    // ビデオ会議がアクティブな場合のみ、カメラボタンの状態を更新
+    if (localStream) {
+        if (frontCamButton) frontCamButton.disabled = disabled;
+        if (backCamButton) backCamButton.disabled = disabled;
+    }
 }
 async function savePost(post) {
   if (!dbPromise) return;
@@ -177,7 +242,7 @@ async function addFriend(friendId, friendName = null) {
         updateStatus(`Friend (${friendId.substring(0,6)}) is already added.`, 'orange');
         return;
     }
-    await tx.store.put({ id: friendId, name: friendName, added: new Date() });
+    await tx.store.put({ id: friendId, name: friendName, added: new Date(), lastSeen: null });
     await tx.done;
     updateStatus(`Friend (${friendId.substring(0,6)}) added successfully!`, 'green');
     await displayFriendList();
@@ -195,16 +260,65 @@ async function isFriend(friendId, dbInstance = null) {
     return false;
   }
 }
+async function updateFriendLastSeen(friendId, seenTime = null) {
+    if (!dbPromise || !friendId) return;
+    try {
+        const db = await dbPromise;
+        const tx = db.transaction('friends', 'readwrite');
+        const friend = await tx.store.get(friendId);
+        if (friend) {
+            // 指定された時刻、または現在時刻で更新
+            friend.lastSeen = seenTime ? new Date(seenTime) : new Date();
+            await tx.store.put(friend);
+            await tx.done;
+        }
+    } catch (error) {
+        console.error(`Failed to update lastSeen for friend ${friendId}:`, error);
+    }
+}
 async function displayFriendList() {
   if (!dbPromise || !friendListElement) return;
   try {
+    const lang = getLang();
     const db = await dbPromise;
-    const friends = await db.getAll('friends');
-    friendListElement.innerHTML = '<h3>Friends</h3>';
+    let friends = await db.getAll('friends');
+    friendListElement.innerHTML = `<h3>${i18n[lang].friends}</h3>`;
     if (friends.length === 0) {
-        friendListElement.innerHTML += '<p>No friends added yet. Scan their QR code!</p>';
+        friendListElement.innerHTML += `<p>${i18n[lang].noFriends}</p>`;
+        return;
     }
-    friends.forEach(friend => displaySingleFriend(friend));
+
+    // オンラインの友達を先に、オフラインの友達を後にソート
+    friends.sort((a, b) => {
+        const aIsOnline = onlineFriendsCache.has(a.id);
+        const bIsOnline = onlineFriendsCache.has(b.id);
+        const aHadOfflineActivity = offlineActivityCache.has(a.id);
+        const bHadOfflineActivity = offlineActivityCache.has(b.id);
+
+        // 1. 不在時アクティビティ > 2. オンライン > 3. オフライン
+        if (aHadOfflineActivity !== bHadOfflineActivity) return aHadOfflineActivity ? -1 : 1;
+        if (aIsOnline !== bIsOnline) return aIsOnline ? -1 : 1;
+
+        // 上記が同じ場合は、追加日が新しい順
+        return new Date(b.added || 0) - new Date(a.added || 0);
+    });
+
+    friends.forEach(friend => {
+        // ピア接続が確立しているか、またはシグナリングサーバー経由でオンラインかをチェック
+        const isOnline = (peers[friend.id] && peers[friend.id].connectionState === 'connected') || onlineFriendsCache.has(friend.id);
+
+        // 無料期間（追加から30日以内）かどうかを判定
+        const addedDate = friend.added ? new Date(friend.added) : null;
+        const now = new Date();
+        const thirtyDaysInMillis = 30 * 24 * 60 * 60 * 1000;
+        const isInFreeTrial = addedDate && (now - addedDate) < thirtyDaysInMillis;
+
+        // 課金ユーザー、または無料期間中であれば足跡機能が有効
+        const canShowFootprints = isSubscribed || isInFreeTrial;
+        const hadOfflineActivity = canShowFootprints && offlineActivityCache.has(friend.id) && !isOnline;
+        displaySingleFriend(friend, isOnline, hadOfflineActivity, canShowFootprints, isInFreeTrial);
+    });
+    updateOnlineFriendsSelector();
   } catch (error) {
   }
 }
@@ -260,21 +374,75 @@ async function handleDeletePost(event) {
     });
     broadcastMessage(postDeleteMessage);
 }
-function displaySingleFriend(friend) {
+function displaySingleFriend(friend, isOnline, hadOfflineActivity, canShowFootprints, isInFreeTrial) {
     if (!friendListElement) return;
     const div = document.createElement('div');
+    const lang = getLang();
     div.className = 'friend-item';
     div.dataset.friendId = friend.id;
+
     const nameSpan = document.createElement('span');
-    nameSpan.textContent = `ID: ${friend.id.substring(0, 8)}...`;
+    nameSpan.className = 'friend-id';
+
+    // hadOfflineActivity は「不在時にオンラインだった」ことを示すフラグ。
+    // isOnline が true の場合は、現在オンラインなので通常の緑表示を優先する。
+    // したがって、hadOfflineActivity が true かつ isOnline が false の場合にのみ紫表示とする。
+    if (canShowFootprints && hadOfflineActivity && !isOnline) { // 足跡機能が有効なユーザーで、不在時アクティビティがある場合に紫色
+        nameSpan.style.color = 'purple'; // 不在時にオンラインだった、または現在もオンラインの友達
+        let statusText = isOnline ? i18n[lang].onlineNow : i18n[lang].wasOnline;
+        // 課金しておらず、無料期間中の場合に注釈を追加
+        if (!isSubscribed && isInFreeTrial) {
+            statusText += ` (${i18n[lang].freeTrial})`;
+        }
+        const lastSeenText = friend.lastSeen ? `${i18n[lang].lastSeen}: ${new Date(friend.lastSeen).toLocaleString()}` : i18n[lang].offline;
+        nameSpan.textContent = `ID: ${friend.id.substring(0, 8)}... (${statusText} - ${lastSeenText})`;
+    } else if (isOnline) {
+        nameSpan.style.color = 'green';
+        const lastSeen = friend.lastSeen ? new Date(friend.lastSeen).toLocaleString() : i18n[lang].justNow;
+        nameSpan.textContent = `ID: ${friend.id.substring(0, 8)}... (${i18n[lang].onlineSince}: ${lastSeen})`;
+    } else {
+        nameSpan.style.color = 'inherit'; // オフラインの友達
+        const lastSeenText = friend.lastSeen ? `${i18n[lang].lastSeen}: ${new Date(friend.lastSeen).toLocaleString()}` : i18n[lang].offline;
+        nameSpan.textContent = `ID: ${friend.id.substring(0, 8)}... (${lastSeenText})`;
+    }
+
     const callFriendButton = document.createElement('button');
-    callFriendButton.textContent = '📞 Call';
+    callFriendButton.textContent = `📞 ${i18n[lang].call}`;
+    callFriendButton.className = 'call-friend-button';
     callFriendButton.dataset.friendId = friend.id;
-    callFriendButton.addEventListener('click', handleCallFriendClick);
-    callFriendButton.disabled = !signalingSocket || signalingSocket.readyState !== WebSocket.OPEN || currentAppState === AppState.CONNECTING || currentAppState === AppState.CONNECTED;
+    // 修正: handleCallFriendClick の代わりに toggleVideoCall を直接呼び出す
+    callFriendButton.addEventListener('click', async (event) => {
+        const friendId = event.target.dataset.friendId;
+        if (friendId) {
+            await toggleAudioCall(friendId);
+        }
+    });
+    callFriendButton.disabled = !isOnline;
+
     div.appendChild(nameSpan);
     div.appendChild(callFriendButton);
     friendListElement.appendChild(div);
+}
+
+function updateOnlineFriendsSelector() {
+    if (!onlineFriendSelector) return;
+
+    const currentlySelected = onlineFriendSelector.value;
+    onlineFriendSelector.innerHTML = '<option value="">-- Select a friend --</option>';
+
+    const onlinePeers = Object.keys(peers).filter(id => peers[id] && peers[id].connectionState === 'connected');
+
+    onlinePeers.forEach(peerId => {
+        const option = document.createElement('option');
+        option.value = peerId;
+        option.textContent = `Peer (${peerId.substring(0, 6)})`;
+        onlineFriendSelector.appendChild(option);
+    });
+
+    // 以前選択されていた相手がまだオンラインなら、再度選択状態にする
+    if (onlinePeers.includes(currentlySelected)) {
+        onlineFriendSelector.value = currentlySelected;
+    }
 }
 async function connectWebSocket() {
   if (signalingSocket && signalingSocket.readyState === WebSocket.OPEN) {
@@ -283,18 +451,28 @@ async function connectWebSocket() {
   const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   const wsUrl = `${wsProtocol}//${location.host}/ws/signaling/`;
   updateStatus('Connecting to signaling server...', 'blue');
-  signalingSocket = new WebSocket(wsUrl);
-  signalingSocket.onopen = () => {
+  signalingSocket = new WebSocket(wsUrl); // WebSocketインスタンスを再作成
+  signalingSocket.onopen = async () => { // asyncキーワードを追加
     wsReconnectAttempts = 0;
     isAttemptingReconnect = false;
     if (wsReconnectTimer) {
       clearTimeout(wsReconnectTimer);
       wsReconnectTimer = null;
     }
-    updateStatus('Connected to signaling server. Registering...', 'blue');
+
+    // --- 友達リストを取得してregisterメッセージに含める ---
+    const db = await dbPromise;
+    const friends = await db.getAll('friends');
+    const friendIds = friends.map(f => f.id);
+
+    updateStatus(`Connected to signaling server. Registering (Subscribed: ${isSubscribed})...`, 'blue');
     sendSignalingMessage({
       type: 'register',
-      payload: { uuid: myDeviceId }
+      payload: { 
+          uuid: myDeviceId,
+          friends: friendIds, // 友達リスト
+          is_subscribed: isSubscribed // 課金状態を送信
+      }
     });
   };
   signalingSocket.onmessage = async (event) => {
@@ -305,10 +483,48 @@ async function connectWebSocket() {
       const senderUUID = message.from || message.uuid || payload.uuid;
       switch (messageType) {
         case 'registered':
+            // isSubscribed はページ読み込み時にAPIから取得するため、ここでは何もしない
+            // サーバーからの通知（不在着信や友達のオンライン通知）を処理する
+            offlineActivityCache.clear(); // 新しい通知を受け取る前にキャッシュをクリア
+            if (payload.notifications && Array.isArray(payload.notifications)) {
+                for (const notification of payload.notifications) {
+                    if (notification.type === 'missed_call') {
+                        displayMissedCallNotification(notification.sender, notification.timestamp);
+                    } else if (notification.type === 'friend_online') {
+                        // 課金ユーザー、または無料期間中のユーザーのみが不在時アクティビティ通知を処理する
+                        const db = await dbPromise;
+                        const friend = await db.get('friends', notification.sender);
+                        let isInFreeTrial = false;
+                        if (friend && friend.added) {
+                            const addedDate = new Date(friend.added);
+                            const now = new Date();
+                            const thirtyDaysInMillis = 30 * 24 * 60 * 60 * 1000;
+                            isInFreeTrial = (now - addedDate) < thirtyDaysInMillis;
+                        }
+
+                        const canProcessNotification = isSubscribed || isInFreeTrial;
+
+                        if (canProcessNotification) {
+                            // 友達の最終ログイン日時を更新し、不在時活動キャッシュに追加
+                            await updateFriendLastSeen(notification.sender, notification.timestamp);
+                            offlineActivityCache.add(notification.sender);
+                            let statusMessage = `Friend ${notification.sender.substring(0,6)} was online at ${new Date(notification.timestamp).toLocaleTimeString()}`;
+                            if (!isSubscribed && isInFreeTrial) {
+                                const lang = getLang();
+                                statusMessage += ` (${i18n[lang].freeTrial})`;
+                            }
+                            updateStatus(statusMessage, 'purple');
+                        }
+                    }
+                }
+            }
+
             updateStatus('Connected to signaling server. Ready.', 'green');
             currentAppState = AppState.INITIAL;
             setInteractionUiEnabled(false);
             await displayFriendList();
+            // 友達との自動接続を開始する
+            startAutoConnectFriendsTimer();
             if (pendingConnectionFriendId) {
                 await createOfferForPeer(pendingConnectionFriendId);
                 pendingConnectionFriendId = null;
@@ -329,21 +545,25 @@ async function connectWebSocket() {
         case 'user_online':
             const joinedUUID = message.uuid;
             if (joinedUUID && joinedUUID !== myDeviceId) {
-                await displayFriendList();
                 const friendExists = await isFriend(joinedUUID);
                 if (friendExists) {
                     onlineFriendsCache.add(joinedUUID);
+                    await updateFriendLastSeen(joinedUUID, new Date()); // 最終ログイン時間を現在時刻で更新
+                    await displayFriendList();
+                    // アプリがフォアグラウンドの場合に音を鳴らす
+                    if (document.visibilityState === 'visible') {
+                        playNotificationSound();
+                    }
+                    // 既存の接続があれば一度閉じてから再接続を試みる。
+                    // close処理が完了するのを待つために、わずかな遅延を入れる。
                     if (peers[joinedUUID]) {
-                        if (peers[joinedUUID].connectionState === 'connecting') {
-                          return;
-                      }
-                        const currentState = peers[joinedUUID].connectionState;
-                        if (currentState === 'connected' || currentState === 'connecting') {
-                        } else {
-                            closePeerConnection(joinedUUID);
-                            await createOfferForPeer(joinedUUID);
-                        }
+                        closePeerConnection(joinedUUID, true); // silent close
+                        // 接続のクリーンアップ時間を確保するためにsetTimeoutを使用
+                        setTimeout(() => {
+                            createOfferForPeer(joinedUUID);
+                        }, 100); // 100msの遅延
                     } else {
+                        // 友達なので接続を開始する
                         await createOfferForPeer(joinedUUID);
                     }
                 } else {
@@ -361,7 +581,7 @@ async function connectWebSocket() {
              }
             break;
         case 'offer':
-            if (senderUUID) {;
+            if (senderUUID) {
                 await handleOfferAndCreateAnswer(senderUUID, payload.sdp);
             }
             break;
@@ -402,39 +622,42 @@ async function connectWebSocket() {
     }
   };
   signalingSocket.onclose = async (event) => {
-    const code = event.code;
-    const reason = event.reason;
-    console.log(`WebSocket disconnected: Code=${code}, Reason='${reason}', Current Attempts=${wsReconnectAttempts}`);
-    const socketInstanceThatClosed = event.target;
-    if (socketInstanceThatClosed) {
-        socketInstanceThatClosed.onopen = null;
-        socketInstanceThatClosed.onmessage = null;
-        socketInstanceThatClosed.onerror = null;
-        socketInstanceThatClosed.onclose = null;
-    }
-    if (signalingSocket !== socketInstanceThatClosed && signalingSocket !== null) {
-        return;
-    }
-    signalingSocket = null;
-
-    if ((code === 1000 || code === 1001) && !isAttemptingReconnect) {
+    // 接続が意図せず切れた場合のみ再接続を試みる
+    // 1000 (Normal Closure) や 1001 (Going Away) はユーザーがページを離れた場合など。
+    if (event.code !== 1000 && event.code !== 1001) {
+        handleWebSocketReconnect();
+    } else {
         updateStatus('Signaling connection closed.', 'orange');
-        resetConnection();
-        await displayFriendList();
-        return;
+    }
+    // 全てのピア接続をリセットする
+    Object.keys(peers).forEach(peerUUID => closePeerConnection(peerUUID, true)); // silent close
+    peers = {};
+    signalingSocket = null;
+    await displayFriendList();
+  };
+  signalingSocket.onerror = (error) => {
+    updateStatus('Signaling socket error.', 'red');
+    console.error("WebSocket Error:", error);
+    // onerrorの後には通常oncloseが呼ばれるので、再接続処理はoncloseに任せる
+    if (signalingSocket && (signalingSocket.readyState === WebSocket.OPEN || signalingSocket.readyState === WebSocket.CONNECTING)) {
+        signalingSocket.close();
+    }
+  };
+}
+
+function handleWebSocketReconnect() {
+    if (isAttemptingReconnect) return; // 既に再接続処理中なら何もしない
+
+    isAttemptingReconnect = true;
+    wsReconnectAttempts = 0;
+    
+    const attemptReconnect = () => {
+      if (wsReconnectAttempts >= MAX_WS_RECONNECT_ATTEMPTS) {
+          updateStatus('Could not reconnect to signaling server. Please check your connection and refresh.', 'red');
+          isAttemptingReconnect = false;
+          return;
       }
-      if (wsReconnectAttempts >= MAX_WS_RECONNECT_ATTEMPTS && isAttemptingReconnect) {
-        updateStatus('Signaling connection lost. Please refresh the page.', 'red');
-        resetConnection();
-        await displayFriendList();
-        isAttemptingReconnect = false;
-        wsReconnectAttempts = 0;
-        return;
-      }
-      if (!isAttemptingReconnect) {
-        isAttemptingReconnect = true;
-        wsReconnectAttempts = 0;
-      }
+
       wsReconnectAttempts++;
       let delay = INITIAL_WS_RECONNECT_DELAY_MS * Math.pow(1.5, wsReconnectAttempts - 1);
       delay = Math.min(delay, MAX_WS_RECONNECT_DELAY_MS);
@@ -442,19 +665,14 @@ async function connectWebSocket() {
       Object.keys(peers).forEach(peerUUID => closePeerConnection(peerUUID));
       Object.values(dataChannels).forEach(channel => { if (channel && channel.readyState !== 'closed') channel.close(); });
       dataChannels = {};
-      setInteractionUiEnabled(false);
-      currentAppState = AppState.CONNECTING;
+
       if (wsReconnectTimer) clearTimeout(wsReconnectTimer);
       wsReconnectTimer = setTimeout(async () => {
-        await connectWebSocket();
+          await connectWebSocket();
+          // connectWebSocketが成功すれば onopen で isAttemptingReconnect は false になる
       }, delay);
-  };
-  signalingSocket.onerror = (error) => {
-    if (signalingSocket && (signalingSocket.readyState === WebSocket.OPEN || signalingSocket.readyState === WebSocket.CONNECTING)) {
-        signalingSocket.close();
-    } else if (!signalingSocket && !isAttemptingReconnect) {
-    }
-  };
+    };
+    attemptReconnect();
 }
 function sendSignalingMessage(message) {
   if (signalingSocket && signalingSocket.readyState === WebSocket.OPEN) {
@@ -612,6 +830,11 @@ async function createPeerConnection(peerUUID) {
           if (peerReconnectInfo[peerUUID] && peerReconnectInfo[peerUUID].isReconnecting) {
             stopPeerReconnect(peerUUID);
           }
+          // 接続が確立したら、不在時アクティビティのキャッシュをクリアしてリストを再描画
+          offlineActivityCache.delete(peerUUID);
+          await displayFriendList();
+          updateOnlineFriendsSelector();
+
           const connectedPeers = Object.values(peers).filter(p => p?.connectionState === 'connected');
           if (connectedPeers.length > 0 && (messageInputElement && !messageInputElement.disabled)) {
           } else if (connectedPeers.length > 0) {
@@ -619,17 +842,22 @@ async function createPeerConnection(peerUUID) {
               currentAppState = AppState.CONNECTED;
           }
           break;
-        case 'disconnected':
         case 'failed':
-          updateStatus(`Connection with ${peerUUID.substring(0,6)} ${peer.connectionState}`, 'orange');
+          updateStatus(`Connection with ${peerUUID.substring(0,6)} failed. Attempting to reconnect...`, 'orange');
           clearNegotiationTimeout(peerUUID);
+          // 接続が 'failed' になった場合にのみ、積極的に再接続を開始する
           if (await isFriend(peerUUID) && (!peerReconnectInfo[peerUUID] || !peerReconnectInfo[peerUUID].isReconnecting)) {
             if (signalingSocket && signalingSocket.readyState === WebSocket.OPEN) {
                  startPeerReconnect(peerUUID);
             } else {
-                 closePeerConnection(peerUUID);
+                 closePeerConnection(peerUUID); // WSがなければ諦める
             }
           }
+          break;
+        case 'disconnected':
+          updateStatus(`Connection with ${peerUUID.substring(0,6)} disconnected.`, 'orange');
+          clearNegotiationTimeout(peerUUID);
+          // 'disconnected' は一時的な場合があるため、すぐに再接続せず、ブラウザの回復や次の自動接続試行に任せる
           const stillConnectedPeers = Object.values(peers).filter(p => p?.connectionState === 'connected');
           if (stillConnectedPeers.length === 0 && currentAppState !== AppState.CONNECTING) {
               setInteractionUiEnabled(false); currentAppState = AppState.INITIAL; updateStatus('All peers disconnected.', 'orange');
@@ -642,6 +870,8 @@ async function createPeerConnection(peerUUID) {
           if (peers[peerUUID]) {
               closePeerConnection(peerUUID, true);
           }
+          updateOnlineFriendsSelector();
+          updateOnlineFriendsSelector();
           const stillConnectedPeersAfterClose = Object.values(peers).filter(p => p?.connectionState === 'connected');
           if (stillConnectedPeersAfterClose.length === 0 && currentAppState !== AppState.CONNECTING) {
               setInteractionUiEnabled(false);
@@ -693,8 +923,10 @@ function setupDataChannelEvents(peerUUID, channel) {
         }
     };
     channel.onerror = (error) => {
-        updateStatus(`Data channel error: ${error}`, 'red');
-        closePeerConnection(peerUUID);
+        // データチャネルのエラーで即座に接続を切断せず、ログに記録するだけにする。
+        // 接続状態の変更は onconnectionstatechange に任せる。
+        console.error(`Data channel error for ${peerUUID}:`, error);
+        updateStatus(`Data channel error with ${peerUUID.substring(0,6)}. Connection may be unstable.`, 'red');
     };
 }
 async function createOfferForPeer(peerUUID, isReconnectAttempt = false) {
@@ -917,6 +1149,7 @@ function closePeerConnection(peerUUID, silent = false) {
         if (connectedPeersCount === 0 && currentAppState !== AppState.CONNECTING) {
              setInteractionUiEnabled(false);
              currentAppState = AppState.INITIAL;
+             updateOnlineFriendsSelector();
              updateStatus(`Connection with ${peerUUID.substring(0,6)} closed. No active connections.`, 'orange');
         } else if (connectedPeersCount > 0) {
             updateStatus(`Connection with ${peerUUID.substring(0,6)} closed. Still connected to others.`, 'orange');
@@ -1061,6 +1294,24 @@ function broadcastMessage(messageString) {
     }
     return sentToAtLeastOne;
 }
+
+function sendPrivateMessage(targetPeerUUID, messageString) {
+    if (!targetPeerUUID) {
+        alert("Please select a friend to chat with.");
+        return false;
+    }
+    const channel = dataChannels[targetPeerUUID];
+    if (channel && channel.readyState === 'open') {
+        try {
+            channel.send(messageString);
+            return true;
+        } catch (error) {
+            console.error(`Error sending private message to ${targetPeerUUID}:`, error);
+            return false;
+        }
+    }
+    return false;
+}
 async function cleanupFileTransferData(fileId, db, transferComplete = false) {
     if (db) {
         try {
@@ -1104,11 +1355,12 @@ function handleSendMessage() {
             timestamp: new Date().toISOString()
         };
         const messageString = JSON.stringify(message);
-        if (broadcastMessage(messageString)) {
+        // 修正：選択された相手にのみ送信
+        if (sendPrivateMessage(selectedPeerId, messageString)) {
             displayDirectMessage(message, true);
             if(input) input.value = '';
         } else {
-            alert(`Not connected to any peers. Please wait or rejoin.`);
+            alert(`Could not send message. Please select an online friend and ensure you are connected.`);
         }
     }
 }
@@ -1272,63 +1524,96 @@ function handleSendFile() {
     }
     readSlice(0);
 }
-async function toggleVideoCall() {
-  if (currentAppState !== AppState.CONNECTED && currentAppState !== AppState.CONNECTING && !Object.values(peers).some(p => p && p.connectionState === 'connected')) {
-        console.warn("Call button clicked but not connected.");
-        alert("Please connect to a peer first.");
+async function toggleAudioCall(targetPeerUUID) {
+    // ターゲットとのP2P接続がなければ、まず接続を試みる
+    if (!peers[targetPeerUUID] || peers[targetPeerUUID].connectionState !== 'connected') {
+        updateStatus(`Connecting to ${targetPeerUUID.substring(0, 6)} for an audio call...`, 'blue');
+        await createOfferForPeer(targetPeerUUID);
+        // 接続が確立するのを少し待つ
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        if (!peers[targetPeerUUID] || peers[targetPeerUUID].connectionState !== 'connected') {
+            updateStatus(`Failed to connect to ${targetPeerUUID.substring(0, 6)}. Please try again.`, 'red');
+            return;
+        }
+    }
+
+    const peer = peers[targetPeerUUID];
+    if (!peer) return;
+
+    // 既に音声トラックを送信しているかチェック
+    const audioSender = peer.getSenders().find(s => s.track && s.track.kind === 'audio');
+
+    if (audioSender) {
+        // 通話終了：トラックを削除し、再ネゴシエーション
+        updateStatus(`Ending audio call with ${targetPeerUUID.substring(0, 6)}.`, 'orange');
+        peer.removeTrack(audioSender);
+        if (localStream) { // 他の通話で使っている可能性も考慮
+            audioSender.track.stop();
+            // もしこの音声トラックがローカルストリームの最後のトラックなら、ストリーム自体をクリア
+            if (localStream.getTracks().length === 0) {
+                localStream = null;
+            }
+        }
+        await createAndSendOfferForRenegotiation(targetPeerUUID, peer);
+    } else {
+        // 通話開始：音声ストリームを取得し、トラックを追加して再ネゴシエーション
+        try {
+            updateStatus(`Starting audio call with ${targetPeerUUID.substring(0, 6)}...`, 'blue');
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+            if (!localStream) localStream = new MediaStream();
+            stream.getAudioTracks().forEach(track => {
+                localStream.addTrack(track);
+                peer.addTrack(track, localStream);
+            });
+            await createAndSendOfferForRenegotiation(targetPeerUUID, peer);
+        } catch (error) {
+            alert(`Could not start audio call: ${error.message}`);
+        }
+    }
+}
+async function toggleVideoCall(targetPeerUUID = null) {
+    // 接続中のピアがいない場合は何もしない
+    const connectedPeers = Object.values(peers).filter(p => p && p.connectionState === 'connected');
+    if (connectedPeers.length === 0 && !localStream) {
+        alert("No one is connected for a video meeting.");
         return;
     }
+
     if (!localStream) {
+        // ビデオ会議を開始
         try {
-            localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-            const videoTrack = localStream.getVideoTracks()[0];
-            if (videoTrack) {
-                videoTrack.enabled = false;
+            // 音声のみでストリームを開始
+            localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+            if (localVideoElement) {
+                localVideoElement.srcObject = localStream;
+                localVideoElement.style.display = 'block'; // 音声のみでも表示エリアは確保
             }
-            if (localVideoElement) localVideoElement.srcObject = localStream;
-            const renegotiationPromises = Object.entries(peers).map(async ([peerUUID, peer]) => {
-                if (peer) {
-                    localStream.getTracks().forEach(track => {
-                        try {
-                            if (peer.addTrack) {
-                                const sender = peer.addTrack(track, localStream);
-                            } else { console.warn(`peer.addTrack is not supported for ${peerUUID}.`); }
-                        } catch (e) { console.error(`Error adding track to ${peerUUID}:`, e); }
-                    });
-                    await createAndSendOfferForRenegotiation(peerUUID, peer);
-                }
-            });
-            await Promise.all(renegotiationPromises);
-            if(videoButton) videoButton.textContent = '🚫';
+            // ピアに音声トラックを送信
+            await addTrackToAllPeers(localStream.getAudioTracks()[0]);
+
             if(callButton) callButton.textContent = 'End Call';
+            if(frontCamButton) frontCamButton.style.display = 'inline-block';
+            if(backCamButton) backCamButton.style.display = 'inline-block';
+            updateStatus('Video meeting started (Audio only).', 'green');
         } catch (error) {
             alert(`Media access error: ${error.message}`);
             localStream = null;
         }
     } else {
+        // ビデオ会議を終了
         localStream.getTracks().forEach(track => track.stop());
-        const tracksToRemove = localStream.getTracks();
-        localStream = null;
-        const renegotiationPromises = Object.entries(peers).map(async ([peerUUID, peer]) => {
-            if (peer) {
-                peer.getSenders().forEach(sender => {
-                    if (sender && sender.track && tracksToRemove.includes(sender.track)) {
-                        try {
-                            if (peer.removeTrack) {
-                                peer.removeTrack(sender);
-                            } else { console.warn(`peer.removeTrack is not supported for ${peerUUID}.`); }
-                        } catch (e) { console.error(`Error removing track from ${peerUUID}:`, e); }
-                    }
-                });
-                await createAndSendOfferForRenegotiation(peerUUID, peer);
-            }
-        });
-        await Promise.all(renegotiationPromises);
+        localStream = null; // ストリームをクリア
+        // 全てのピアからトラックを削除するシグナリング（再ネゴシエーション）
+        await removeAllTracksFromAllPeers();
+
         if(localVideoElement) localVideoElement.srcObject = null;
         if(callButton) callButton.textContent = '📞';
-        if(videoButton) videoButton.textContent = '🎥';
+        if(frontCamButton) frontCamButton.style.display = 'none';
+        if(backCamButton) backCamButton.style.display = 'none';
+        updateStatus('Video meeting ended.', 'orange');
     }
 }
+
 async function createAndSendOfferForRenegotiation(peerUUID, peer) {
     if (!peer || peer.connectionState !== 'connected') {
         console.warn(`Cannot renegotiate with ${peerUUID}, connection not established.`);
@@ -1346,16 +1631,102 @@ async function createAndSendOfferForRenegotiation(peerUUID, peer) {
         console.error(`Error during renegotiation offer for ${peerUUID}:`, error);
     }
 }
-function toggleLocalVideo() {
-    if (localStream) {
-        const videoTrack = localStream.getVideoTracks()[0];
-        if (videoTrack) {
-            videoTrack.enabled = !videoTrack.enabled;
-            if(videoButton) videoButton.textContent = videoTrack.enabled ? '🎥' : '🚫';
-        }
-      } else {
-      }
+
+async function handleVideoButtonClick(facingMode) {
+    if (!localStream) {
+        alert("Please start a meeting first (click 📞).");
+        return;
+    }
+    const videoTrack = localStream.getVideoTracks()[0];
+
+    if (videoTrack) {
+        // ビデオが既にオンの場合、オフにする
+        await removeVideo();
+    } else {
+        // ビデオがオフの場合、指定されたカメラでオンにする
+        await addVideo(facingMode);
+    }
 }
+
+async function addVideo(facingMode) {
+    if (!localStream) return;
+    // 既にビデオトラックがあれば何もしない
+    if (localStream.getVideoTracks().length > 0) {
+        updateStatus('Video is already on.', 'orange');
+        return;
+    }
+
+    try {
+        updateStatus(`Starting ${facingMode} camera...`, 'blue');
+        const videoStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: facingMode } });
+        const newVideoTrack = videoStream.getVideoTracks()[0];
+        localStream.addTrack(newVideoTrack);
+        if (localVideoElement) localVideoElement.srcObject = localStream;
+
+        // 全てのピアに新しいビデオトラックを追加
+        await addTrackToAllPeers(newVideoTrack);
+
+        currentFacingMode = facingMode;
+        updateStatus(`Video added with ${facingMode} camera.`, 'green');
+    } catch (error) {
+        console.error(`Error adding video: ${error}`);
+        updateStatus(`Could not start camera: ${error.message}`, 'red');
+    }
+}
+
+async function removeVideo() {
+    if (!localStream) return;
+    const videoTrack = localStream.getVideoTracks()[0];
+    if (!videoTrack) return;
+
+    try {
+        updateStatus('Stopping video...', 'orange');
+        videoTrack.stop();
+        localStream.removeTrack(videoTrack);
+        if (localVideoElement) localVideoElement.srcObject = localStream;
+
+        // 全てのピアからビデオトラックを削除
+        await removeTrackFromAllPeers(videoTrack);
+
+        updateStatus('Video stopped.', 'blue');
+    } catch (error) {
+        console.error(`Error removing video: ${error}`);
+    }
+}
+
+async function addTrackToAllPeers(track) {
+    const renegotiationPromises = Object.entries(peers).map(async ([peerUUID, peer]) => {
+        if (peer && peer.connectionState === 'connected') {
+            peer.addTrack(track, localStream);
+            await createAndSendOfferForRenegotiation(peerUUID, peer);
+        }
+    });
+    await Promise.all(renegotiationPromises);
+}
+
+async function removeTrackFromAllPeers(track) {
+    const renegotiationPromises = Object.entries(peers).map(async ([peerUUID, peer]) => {
+        if (peer && peer.connectionState === 'connected') {
+            const sender = peer.getSenders().find(s => s.track === track);
+            if (sender) {
+                peer.removeTrack(sender);
+                await createAndSendOfferForRenegotiation(peerUUID, peer);
+            }
+        }
+    });
+    await Promise.all(renegotiationPromises);
+}
+
+async function removeAllTracksFromAllPeers() {
+    const renegotiationPromises = Object.entries(peers).map(async ([peerUUID, peer]) => {
+        if (peer) {
+            peer.getSenders().forEach(sender => peer.removeTrack(sender));
+            await createAndSendOfferForRenegotiation(peerUUID, peer);
+        }
+    });
+    await Promise.all(renegotiationPromises);
+}
+
 function handleRemoteTrack(peerUUID, track, stream) {
     if (!remoteVideosContainer) {
         console.warn("Remote videos container not found.");
@@ -1407,75 +1778,80 @@ function updateQrCodeWithValue(value) {
     }
 }
 function handleStartScanClick() {
-    if (!window.html5QrCodeScanner || window.html5QrCodeScanner.getState() !== 2 ) {
+    // スキャン中でなければ、指定されたカメラでスキャンを開始する
+    if (!isScanning) {
         startQrScanner();
     } else {
-        console.warn("Scan button clicked but already scanning or scanner not ready.");
+        stopQrScanner();
     }
 }
-function startQrScanner() {
-    if (window.html5QrCodeScanner && window.html5QrCodeScanner.getState() === 2 ) {
+
+async function startQrScanner() {
+    if (isScanning) return; // 既にスキャン中なら何もしない
+
+    if (!qrReaderElement || typeof Html5Qrcode === 'undefined') {
+        updateStatus('QR Scanner library not loaded yet.', 'orange');
         return;
     }
-    if (!qrReaderElement) {
-        console.warn("QR Reader element not available for start.");
-        return;
+
+    if (!html5QrCode) {
+        html5QrCode = new Html5Qrcode("qr-reader");
     }
-    if(startScanButton) startScanButton.disabled = true;
-    qrReaderElement.style.display = 'block';
-    if (typeof Html5Qrcode !== 'undefined') {
-        try {
-            if (window.html5QrCodeScanner && typeof window.html5QrCodeScanner.getState === 'function') {
-                 const state = window.html5QrCodeScanner.getState();
-                 if (state === 2 || state === 1 ) {
-                     window.html5QrCodeScanner.stop().catch(e => console.warn("Ignoring error stopping previous scanner:", e));
-                 }
-            } else if (window.html5QrCodeScanner && typeof window.html5QrCodeScanner.clear === 'function') {
-                window.html5QrCodeScanner.clear().catch(e => console.warn("Ignoring error clearing previous scanner:", e));
-            }
-        } catch (e) { console.warn("Error accessing previous scanner state:", e); }
-        try {
-            window.html5QrCodeScanner = new Html5Qrcode("qr-reader");
-        } catch (e) {
-            console.error("Error creating Html5Qrcode instance:", e);
-            updateStatus(`QR Reader initialization error: ${e.message}`, 'red');
-            if(qrReaderElement) qrReaderElement.style.display = 'none';
-            if(startScanButton) startScanButton.disabled = false;
-            return;
+
+    try {
+        if(startScanButton) {
+            startScanButton.textContent = 'Starting...';
+            startScanButton.disabled = true;
         }
-        const qrCodeSuccessCallback = (decodedText, decodedResult) => {
-            updateStatus('QR Scan successful. Processing...', 'blue');
-            window.html5QrCodeScanner.stop().then(ignore => {
-                if(qrReaderElement) qrReaderElement.style.display = 'none';
-                 handleScannedQrData(decodedText);
-            }).catch(err => {
-                 if(qrReaderElement) qrReaderElement.style.display = 'none';
-                 handleScannedQrData(decodedText);
-            }).finally(() => {
-                 if(startScanButton) startScanButton.disabled = false;
-            });
-        };
-        const config = { fps: 10, qrbox: { width: 200, height: 200 } };
-        window.html5QrCodeScanner.start({ facingMode: "environment" }, config, qrCodeSuccessCallback)
-            .catch(err => {
-                console.error(`QR Scanner start error: ${err}`);
-                if (err.name === 'NotAllowedError') {
-                    updateStatus('Camera access denied. Please check settings.', 'red');
-                } else {
-                    updateStatus(`QR scanner error: ${err.message}`, 'red');
-                }
-                if(qrReaderElement) qrReaderElement.style.display = 'none';
-                if(startScanButton) startScanButton.disabled = false;
-            });
-    } else {
-        console.error("Html5Qrcode not loaded.");
+        qrReaderElement.style.display = 'block';
+        updateStatus('Starting QR Scanner...', 'blue');
+
+        await html5QrCode.start(
+            { facingMode: "environment" }, // 背面カメラを使用
+            { fps: 10, qrbox: { width: 250, height: 250 } },
+            (decodedText, decodedResult) => {
+                updateStatus('QR Scan successful. Processing...', 'blue');
+                handleScannedQrData(decodedText);
+                stopQrScanner(); // スキャン成功後、自動で停止
+            },
+            (errorMessage) => { /* QRコードが見つからない場合は何もしない */ }
+        );
+
+        isScanning = true;
+        updateStatus('QR Scanner started.', 'blue');
+        if(startScanButton) {
+            startScanButton.textContent = 'Stop Scan';
+            startScanButton.disabled = false;
+        }
+    } catch (err) {
+        updateStatus(`QR Scanner Error: ${err}`, 'red');
         if(qrReaderElement) qrReaderElement.style.display = 'none';
-        if(startScanButton) startScanButton.disabled = false;
-        setTimeout(startQrScanner, 500);
+        if(startScanButton) {
+            startScanButton.textContent = 'Scan QR Code';
+            startScanButton.disabled = false;
+        }
+        isScanning = false; // 状態をリセット
+    }
+}
+
+async function stopQrScanner() {
+    if (!isScanning || !html5QrCode) return;
+
+    try {
+        await html5QrCode.stop();
+        updateStatus('QR Scanner stopped.', 'blue');
+    } catch (err) {
+        console.error("Error stopping QR scanner:", err);
+    } finally {
+        isScanning = false;
+        if(qrReaderElement) qrReaderElement.style.display = 'none';
+        if(startScanButton) {
+            startScanButton.textContent = 'Scan QR Code';
+            startScanButton.disabled = false;
+        }
     }
 }
 async function handleScannedQrData(decodedText) {
-    if(startScanButton) startScanButton.disabled = false;
     try {
         const url = new URL(decodedText);
         const params = new URLSearchParams(url.search);
@@ -1499,25 +1875,6 @@ async function handleScannedQrData(decodedText) {
              alert(`QR data processing error: ${error.message}`);
         }
     }
-}
-function handleCallFriendClick(event) {
-    const friendId = event.target.dataset.friendId;
-    if (!friendId) return;
-    if (!signalingSocket || signalingSocket.readyState !== WebSocket.OPEN) {
-        alert("Not connected to signaling server. Please wait or refresh.");
-        return;
-    }
-    if (currentAppState === AppState.CONNECTING || currentAppState === AppState.CONNECTED) {
-        alert("Already in a call or connecting.");
-        return;
-    }
-    updateStatus(`Calling ${friendId.substring(0, 6)}...`, 'blue');
-    setInteractionUiEnabled(false);
-    displayFriendList();
-    sendSignalingMessage({
-        type: 'call-request',
-        payload: { target: friendId }
-    });
 }
 function handleIncomingCall(callerId) {
     if (currentAppState === AppState.CONNECTING || currentAppState === AppState.CONNECTED) {
@@ -1554,7 +1911,91 @@ async function handleCallBusy(peerId) {
     setInteractionUiEnabled(false);
     await displayFriendList();
 }
+
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+
+// app.js のどこか（例: DOMContentLoaded の最後の方）に追加
+
+async function subscribeToPushNotifications() {
+    if (!('PushManager' in window) || !('serviceWorker' in navigator)) {
+        console.warn('Push messaging is not supported');
+        return;
+    }
+
+    const registration = await navigator.serviceWorker.ready;
+    const permission = await window.Notification.requestPermission();
+    if (permission !== 'granted') {
+        updateStatus('Push notification permission not granted.', 'orange');
+        return;
+    }
+
+    // サーバーからVAPID公開鍵を取得するAPIを呼び出す（別途実装が必要）
+    const response = await fetch('/api/get_vapid_public_key/'); 
+    const data = await response.json();
+    const vapidPublicKey = data.publicKey;
+
+    const subscription = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: vapidPublicKey
+    });
+
+    // 購読情報をサーバーに送信して保存するAPIを呼び出す（別途実装が必要）
+    await fetch('/api/save_push_subscription/', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': getCookie('csrftoken')
+        },
+        body: JSON.stringify({ subscription: subscription, user_id: myDeviceId })
+    });
+    updateStatus('Subscribed to push notifications!', 'green');
+}
+
+// 適切なタイミングで呼び出す。例：ボタンクリック時や、初回アクセス時など。
+// subscribeToPushNotifications();
+
+
+// 適切なタイミングで呼び出す。例：ボタンクリック時や、初回アクセス時など。
+let unreadCount = 0;
+
+function displayMissedCallNotification(senderId, timestamp) {
+    if (!statusElement) return;
+    const lang = getLang();
+    const date = new Date(timestamp);
+    const timeString = date.toLocaleTimeString();
+    const message = `📞 ${i18n[lang].missedCallFrom} ${senderId.substring(0, 6)} ${i18n[lang].at} ${timeString}`;
+    // updateStatus を使って、他のステータスメッセージと同様に表示する
+    updateStatus(message, 'purple'); // 紫色などで目立たせる
+
+    // --- バッジ機能の追加 ---
+    if ('setAppBadge' in navigator) {
+        unreadCount++;
+        navigator.setAppBadge(unreadCount).catch(error => {
+            console.error('Failed to set app badge:', error);
+        });
+    }
+}
+
 function setupEventListeners() {
+    const enableNotificationsButton = document.getElementById('enableNotificationsButton');
+    enableNotificationsButton?.addEventListener('click', subscribeToPushNotifications);
+
+    const subscribeButton = document.getElementById('subscribeButton');
+    subscribeButton?.addEventListener('click', handleSubscribeClick);
+
     window.addEventListener('resize', () => {
         if (qrElement && qrElement.style.display !== 'none') {
             const myAppUrl = window.location.origin + '/?id=' + myDeviceId;
@@ -1565,8 +2006,10 @@ function setupEventListeners() {
     sendPostButton?.addEventListener('click', handleSendPost);
     sendFileButton?.addEventListener('click', handleSendFile);
     callButton?.addEventListener('click', toggleVideoCall);
-    videoButton?.addEventListener('click', toggleLocalVideo);
+    frontCamButton?.addEventListener('click', () => handleVideoButtonClick('user'));
+    backCamButton?.addEventListener('click', () => handleVideoButtonClick('environment'));
     startScanButton?.addEventListener('click', handleStartScanClick);
+
     acceptCallButton?.addEventListener('click', handleAcceptCall);
     rejectCallButton?.addEventListener('click', handleRejectCall);
     messageInputElement?.addEventListener('keypress', (e) => {
@@ -1577,15 +2020,16 @@ function setupEventListeners() {
     });
     document.addEventListener('visibilitychange', () => {
         if (document.visibilityState === 'visible') {
-          if ((!signalingSocket || signalingSocket.readyState !== WebSocket.OPEN) && !isAttemptingReconnect) {
-            updateStatus('Re-checking connection...', 'blue');
-            if (wsReconnectTimer) {
-              clearTimeout(wsReconnectTimer);
-              wsReconnectTimer = null;
-            }
-            wsReconnectAttempts = 0;
+          if (!signalingSocket || signalingSocket.readyState !== WebSocket.OPEN) {
             connectWebSocket();
           } else if (signalingSocket && signalingSocket.readyState === WebSocket.OPEN) {
+            // --- バッジクリア処理 ---
+            if ('clearAppBadge' in navigator) {
+                unreadCount = 0;
+                navigator.clearAppBadge().catch(error => {
+                    console.error('Failed to clear app badge:', error);
+                });
+            }
             startAutoConnectFriendsTimer();
           }
         } else {
@@ -1593,7 +2037,66 @@ function setupEventListeners() {
         }
       });
     }
-document.addEventListener('DOMContentLoaded', async () => {
+
+async function fetchSubscriptionStatus() {
+    if (!myDeviceId) return; // myDeviceIdがない場合は何もしない
+    try {
+        const response = await fetch(`/api/stripe/subscription-status/?user_id=${myDeviceId}`);
+        if (response.ok) {
+            const data = await response.json();
+            isSubscribed = data.is_subscribed;
+        }
+    } catch (error) {
+        console.error('Failed to fetch subscription status:', error);
+        isSubscribed = false; // エラー時は非課金として扱う
+    }
+}
+
+async function handleSubscribeClick() {
+    // サーバーから公開鍵を取得
+    const keyResponse = await fetch('/api/stripe/public-key/');
+    const keyData = await keyResponse.json();
+    const stripePublicKey = keyData.publicKey;
+
+    if (!stripePublicKey) {
+        updateStatus('Could not retrieve payment configuration.', 'red');
+        return;
+    }
+
+    const stripe = Stripe(stripePublicKey);
+
+    // ユーザーのブラウザ言語設定から通貨を決定 (日本語ならjpy, それ以外はusd)
+    const currency = getLang() === 'ja' ? 'jpy' : 'usd';
+
+    try {
+        const response = await fetch('/api/stripe/create-checkout-session/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken'),
+                'Accept': 'application/json'
+            },
+            body: JSON.stringify({ user_id: myDeviceId, currency: currency })
+        });
+        const session = await response.json();
+        if (session.id) {
+            await stripe.redirectToCheckout({ sessionId: session.id });
+        } else {
+            // サーバーからのエラーメッセージを具体的に表示
+            const errorMessage = session.error || 'An unknown error occurred while creating the checkout session.';
+            updateStatus(`Could not create checkout session: ${errorMessage}`, 'red');
+            console.error('Checkout session creation failed:', session);
+        }
+    } catch (error) {
+        updateStatus(`Error during subscription process: ${error}`, 'red');
+        console.error('Error in handleSubscribeClick:', error);
+    }
+}
+
+async function main() {
+  updateStatus('Initializing...', 'black');
+
+  // DOM要素の取得をmain関数の最初に移動
   qrElement = document.getElementById('qrcode');
   statusElement = document.getElementById('connectionStatus');
   qrReaderElement = document.getElementById('qr-reader');
@@ -1615,26 +2118,21 @@ document.addEventListener('DOMContentLoaded', async () => {
   sendFileButton = document.getElementById('sendFile');
   fileTransferStatusElement = document.getElementById('file-transfer-status');
   callButton = document.getElementById('callButton');
-  videoButton = document.getElementById('videoButton');
+  frontCamButton = document.getElementById('frontCamButton');
+  backCamButton = document.getElementById('backCamButton');
   startScanButton = document.getElementById('startScanButton');
   if (!remoteVideosContainer) {
-    remoteVideosContainer = document.querySelector('.video-scroll-container');
-  }
-  if (statusElement) {
-    statusElement.addEventListener('click', () => {
-      statusElement.classList.toggle('status-expanded');
-    });
+      remoteVideosContainer = document.querySelector('.video-scroll-container');
   }
 
-  if (typeof idb === 'undefined') {
-      updateStatus("Database features disabled (idb library not loaded).", "orange");
-  } else if (!dbPromise) {
-      updateStatus("Database initialization failed.", "red");
-  }
   myDeviceId = localStorage.getItem('cybernetcall-deviceId') || generateUUID();
   localStorage.setItem('cybernetcall-deviceId', myDeviceId);
-  await displayInitialPosts();
-  setupEventListeners();
+  setInteractionUiEnabled(false); // まずUIを無効化
+
+  // 3. 課金状態の確認
+  await fetchSubscriptionStatus(); // ページ読み込み時に課金状態を取得
+
+  // 4. QRコードの表示
   if (myDeviceId && typeof myDeviceId === 'string' && myDeviceId.length > 0) {
     const myAppUrl = window.location.origin + '/?id=' + myDeviceId;
     updateQrCodeWithValue(myAppUrl);
@@ -1642,54 +2140,19 @@ document.addEventListener('DOMContentLoaded', async () => {
     console.error("Device ID is not available. Cannot generate QR code.");
     updateStatus("Error: Device ID missing. Cannot generate QR code.", "red");
   }
-  updateStatus('Initializing...', 'black');
-  setInteractionUiEnabled(false);
-  await displayFriendList();
-  if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('/static/cnc/service-worker.js')
-      .then(registration => {
-        registration.onupdatefound = () => {
-          const installingWorker = registration.installing;
-          if (installingWorker) {
-                let refreshing;
-            installingWorker.onstatechange = () => {
-              if (installingWorker.state === 'installed') {
-                if (navigator.serviceWorker.controller) {
-                     if (confirm('A new version of the app is available. Refresh now to get the latest features?')) {
-                       if (registration.waiting) {
-                           registration.waiting.postMessage({ type: 'SKIP_WAITING' });
-                       }
-                       navigator.serviceWorker.addEventListener('controllerchange', () => {
-                           if (refreshing) return;
-                           window.location.reload();
-                           refreshing = true;
-                       });
-                     } else {
-                       updateStatus('New version available. Please refresh soon to update.', 'blue');
-                     }
-                }
-              }
-            };
-          }
-        };
-      })
-      .catch(error => {
-        updateStatus(`Service Worker registration error: ${error.message}`, 'red');
-      });
+  
+  // 5. データベースとUIの初期表示
+  if (typeof idb === 'undefined' || !dbPromise) {
+      updateStatus("Database features disabled. Offline functionality will be limited.", "orange");
   } else {
-    updateStatus('Offline features unavailable (Service Worker not supported)', 'orange');
+      await displayInitialPosts();
+      await displayFriendList();
   }
-  if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.addEventListener('message', event => {
-      if (event.data && event.data.type === 'APP_ACTIVATED') {
-        if ((!signalingSocket || signalingSocket.readyState !== WebSocket.OPEN) && !isAttemptingReconnect) {
-            connectWebSocket();
-        }
-        startAutoConnectFriendsTimer();
-      }
-    });
-  }
+
+  // 5. WebSocket接続
   await connectWebSocket();
+
+  // 6. URLパラメータ（友達追加リンク）の処理
   const urlParams = new URLSearchParams(window.location.search);
   const incomingFriendId = urlParams.get('id');
   if (incomingFriendId && incomingFriendId !== myDeviceId) {
@@ -1697,6 +2160,74 @@ document.addEventListener('DOMContentLoaded', async () => {
       await addFriend(incomingFriendId);
       pendingConnectionFriendId = incomingFriendId;
 
+      // WebSocket接続が確立された後にピア接続を開始する
+      if (signalingSocket && signalingSocket.readyState === WebSocket.OPEN) {
+          await createOfferForPeer(pendingConnectionFriendId);
+          pendingConnectionFriendId = null;
+      }
+  }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    // 1. DOM要素の取得
+    qrElement = document.getElementById('qrcode');
+    statusElement = document.getElementById('connectionStatus');
+    // ... (他の要素も同様に取得)
+    // (前の修正からこのブロックをここに移動)
+    qrReaderElement = document.getElementById('qr-reader');
+    qrResultsElement = document.getElementById('qr-reader-results');
+    localVideoElement = document.getElementById('localVideo');
+    remoteVideosContainer = document.getElementById('remoteVideosContainer');
+    messageAreaElement = document.getElementById('messageArea');
+    postAreaElement = document.getElementById('postArea');
+    incomingCallModal = document.getElementById('incomingCallModal');
+    callerIdElement = document.getElementById('callerId');
+    acceptCallButton = document.getElementById('acceptCallButton');
+    rejectCallButton = document.getElementById('rejectCallButton');
+    friendListElement = document.getElementById('friendList');
+    messageInputElement = document.getElementById('messageInput');
+    sendMessageButton = document.getElementById('sendMessage');
+    postInputElement = document.getElementById('postInput');
+    sendPostButton = document.getElementById('sendPost');
+    fileInputElement = document.getElementById('fileInput');
+    onlineFriendSelector = document.getElementById('onlineFriendSelector');
+    sendFileButton = document.getElementById('sendFile');
+    fileTransferStatusElement = document.getElementById('file-transfer-status');
+    callButton = document.getElementById('callButton');
+    frontCamButton = document.getElementById('frontCamButton');
+    backCamButton = document.getElementById('backCamButton');
+    startScanButton = document.getElementById('startScanButton');
+    if (!remoteVideosContainer) {
+        remoteVideosContainer = document.querySelector('.video-scroll-container');
+    }
+    if (statusElement) {
+        statusElement.addEventListener('click', () => {
+            statusElement.classList.toggle('status-expanded');
+        });
     }
 
+    // 2. UIイベントリスナーのセットアップ
+    setupEventListeners();
+    // Service Workerの登録
+
+    onlineFriendSelector?.addEventListener('change', (event) => {
+        selectedPeerId = event.target.value;
+        updateStatus(selectedPeerId ? `Now chatting with ${selectedPeerId.substring(0,6)}` : 'No friend selected for chat.', 'blue');
+    });
+
+    if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('/static/cnc/service-worker.js')
+            .then(registration => {
+                console.log('Service Worker registered successfully.');
+            })
+            .catch(error => {
+                console.error('Service Worker registration failed:', error);
+                updateStatus(`Offline features unavailable: ${error.message}`, 'orange');
+            });
+    } else {
+        updateStatus('Offline features unavailable (Service Worker not supported)', 'orange');
+    }
+
+    // 3. メイン処理の開始
+    main();
 });

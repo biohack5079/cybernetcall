@@ -1,18 +1,24 @@
 import os 
-from channels.routing import ProtocolTypeRouter, URLRouter
 from django.core.asgi import get_asgi_application
-from channels.auth import AuthMiddlewareStack
-# import cnc.routing # cnc から signaling に変更
-import signaling.routing # signaling アプリのルーティングをインポート
 
-# os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'mysite.settings') # mysite から cybernetcall に変更
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'cybernetcall.settings')
 
+# Djangoの初期化は、モデルや設定に依存する他のモジュールを
+# インポートする前に行う必要があります。
+django_asgi_app = get_asgi_application()
+
+from channels.routing import ProtocolTypeRouter, URLRouter
+from channels.security.websocket import AllowedHostsOriginValidator
+from channels.auth import AuthMiddlewareStack
+import signaling.routing # signaling アプリのルーティングをインポート
+
 application = ProtocolTypeRouter({
-    "http": get_asgi_application(),
-    "websocket": AuthMiddlewareStack(
-        URLRouter(
-            signaling.routing.websocket_urlpatterns # signaling アプリのルーティングを使用
+    "http": django_asgi_app,
+    "websocket": AllowedHostsOriginValidator(
+        AuthMiddlewareStack(
+            URLRouter(
+                signaling.routing.websocket_urlpatterns # signaling アプリのルーティングを使用
+            )
         )
     ),
 })

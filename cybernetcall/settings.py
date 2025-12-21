@@ -22,20 +22,24 @@ from dj_database_url import parse as dburl
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-env = environ.Env()
+# django-environで複数行のキーを扱えるようにする
+env = environ.Env(multiline=True)
 env.read_env(os.path.join(BASE_DIR, ".env"))
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.0/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-vaj*zpu!9^3=8%=_n(*9z39dq29l!mbf49rz(jr62k744wvl7j'
+SECRET_KEY = env('SECRET_KEY')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = False
+DEBUG = env.bool('DJANGO_DEBUG', default=False)
 
-ALLOWED_HOSTS = ['cybernetcall.onrender.com']
+ALLOWED_HOSTS = ['cybernetcall.onrender.com', 'localhost', '127.0.0.1']
 
+# または、デバッグモードの時だけ許可するという方法もあります
+if DEBUG:
+    ALLOWED_HOSTS.extend(['.ngrok-free.app', '.onrender.com'])
 
 # Application definition
 
@@ -82,18 +86,17 @@ TEMPLATES = [
     },
 ]
 
-ASGI_APPLICATION = 'cybernetcall.asgi.application'
+ASGI_APPLICATION = "cybernetcall.asgi.application"
 WSGI_APPLICATION = 'cybernetcall.wsgi.application'
 
-# REDIS_URL = os.environ.get('REDIS_URL', 'redis://localhost:6379/1') # /1 などDB番号を指定推奨
-
-redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379") 
+# RedisのURLをsettingsで定義
+REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
 
 CHANNEL_LAYERS = {
     "default": {
         "BACKEND": "channels_redis.core.RedisChannelLayer",
         "CONFIG": {
-            "hosts": [redis_url],
+            "hosts": [REDIS_URL],
         },
         # 開発中はインメモリバックエンドでもOK
         # "BACKEND": "channels.layers.InMemoryChannelLayer"
@@ -114,11 +117,16 @@ CHANNEL_LAYERS = {
 #     }
 # }
 
-# settings.py のデータベース設定部分
-default_dburl = "sqlite:///" + str(BASE_DIR / "db.sqlite3")
-DATABASES = {
-    'default': env.db('DATABASE_URL', default=default_dburl)
-}
+# 開発環境(DEBUG=True)ではSQLiteを、本番環境(DEBUG=False)ではDATABASE_URLを使用する
+if DEBUG:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': BASE_DIR / 'db.sqlite3',
+        }
+    }
+else:
+    DATABASES = {'default': env.db('DATABASE_URL')}
 
 
 # Password validation
@@ -156,9 +164,8 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/5.0/howto/static-files/
 
 STATIC_URL = '/static/'
-STATICFILES_DIRS = [
-    BASE_DIR / 'cnc/static',
-]
+# STATICFILES_DIRS は、アプリケーションの 'static' ディレクトリ外に静的ファイルを置く場合に使用します。
+# 今回は 'cnc' アプリ内に静的ファイルがあるため、この設定は不要です。
 
 
 # Default primary key field type
@@ -172,3 +179,12 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 SUPERUSER_NAME = env("SUPERUSER_NAME")
 SUPERUSER_EMAIL = env("SUPERUSER_EMAIL")
 SUPERUSER_PASSWORD = env("SUPERUSER_PASSWORD")
+
+VAPID_PUBLIC_KEY = env("VAPID_PUBLIC_KEY")
+VAPID_PRIVATE_KEY = env("VAPID_PRIVATE_KEY")
+
+STRIPE_PUBLISHABLE_KEY = env("STRIPE_PUBLISHABLE_KEY")
+STRIPE_SECRET_KEY = env("STRIPE_SECRET_KEY")
+STRIPE_PRICE_ID_USD = env("STRIPE_PRICE_ID_USD")
+STRIPE_PRICE_ID_JPY = env("STRIPE_PRICE_ID_JPY")
+STRIPE_WEBHOOK_SECRET = env("STRIPE_WEBHOOK_SECRET")

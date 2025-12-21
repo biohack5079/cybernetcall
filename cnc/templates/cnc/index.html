@@ -12,6 +12,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrious/4.0.2/qrious.min.js" defer></script>
   <script src="https://unpkg.com/idb@7/build/umd.js" defer></script>
   <script src="https://unpkg.com/html5-qrcode" defer></script>
+  <script src="https://js.stripe.com/v3/"></script>
   <script src="{% static 'cnc/app.js' %}" defer></script>
 </head>
 <body>
@@ -26,10 +27,27 @@
   <div id="qr-reader-results" style="margin-top: 10px; font-style: italic;"></div>
 
   <section class="section">
+    <!-- 友達リストがここに表示されます -->
+    <div id="friendList" class="friend-list-container"></div>
+  </section>
+
+  <section class="section">
+    <h2>Subscription (Optional)</h2>
+    <p>Subscribe to enable advanced notification features.</p>
+    <button id="subscribeButton">Subscribe</button>
+    <button id="manageSubscriptionButton" style="display: none;">Manage Subscription</button>
+  </section>
+
+  <section class="section">
     <h2>Direct Mail</h2>
-    <label for="messageInput" class="visually-hidden">Direct Message</label>
-    <input type="text" id="messageInput" placeholder="Type a message..." aria-label="Direct Message">
-    <button id="sendMessage">Send</button>
+    <div>
+      <label for="onlineFriendSelector">Send to:</label>
+      <select id="onlineFriendSelector">
+        <option value="">-- Select a friend --</option>
+      </select>
+    </div>
+    <input type="text" id="messageInput" placeholder="Type a private message..." aria-label="Private Message">
+    <button id="sendMessage">Send Private</button>
     <div id="messageArea" class="message-area"></div>
   </section>
 
@@ -55,8 +73,9 @@
       </div>
     </div>
     <div class="call-controls">
-      <button id="callButton" aria-label="Start/End Call">📞</button>
-      <button id="videoButton" aria-label="Toggle Video">🎥</button>
+      <button id="callButton" aria-label="Start/End Group Meeting" title="Start/End Group Meeting">📞</button>
+      <button id="frontCamButton" aria-label="Toggle Front Camera" title="Toggle Front Camera" style="display: none;">Front Cam</button>
+      <button id="backCamButton" aria-label="Toggle Back Camera" title="Toggle Back Camera" style="display: none;">Back Cam</button>
     </div>
     <div style="margin-top: 1rem;">
         <label for="fileInput">Share File:</label>
@@ -83,4 +102,3 @@
 
 </body>
 </html>
-
