@@ -292,11 +292,21 @@ async function displayFriendList() {
     friends.sort((a, b) => {
         const aIsOnline = onlineFriendsCache.has(a.id);
         const bIsOnline = onlineFriendsCache.has(b.id);
-        const aHadOfflineActivity = offlineActivityCache.has(a.id);
-        const bHadOfflineActivity = offlineActivityCache.has(b.id);
+        
+        // 足跡表示の条件（権限チェック含む）をソートにも適用
+        const checkFootprint = (friend) => {
+            const addedDate = friend.added ? new Date(friend.added) : null;
+            const now = new Date();
+            const thirtyDaysInMillis = 30 * 24 * 60 * 60 * 1000;
+            const isInFreeTrial = addedDate && (now - addedDate) < thirtyDaysInMillis;
+            return (isSubscribed || isInFreeTrial) && offlineActivityCache.has(friend.id);
+        };
 
-        // 1. 不在時アクティビティ > 2. オンライン > 3. オフライン
-        if (aHadOfflineActivity !== bHadOfflineActivity) return aHadOfflineActivity ? -1 : 1;
+        const aIsPurple = checkFootprint(a) && !aIsOnline;
+        const bIsPurple = checkFootprint(b) && !bIsOnline;
+
+        // 1. 足跡（紫） > 2. オンライン（緑） > 3. オフライン
+        if (aIsPurple !== bIsPurple) return aIsPurple ? -1 : 1;
         if (aIsOnline !== bIsOnline) return aIsOnline ? -1 : 1;
 
         // 上記が同じ場合は、追加日が新しい順
@@ -320,6 +330,7 @@ async function displayFriendList() {
     });
     updateOnlineFriendsSelector();
   } catch (error) {
+    console.error("Error displaying friend list:", error);
   }
 }
 async function displayInitialPosts() {
@@ -388,8 +399,8 @@ function displaySingleFriend(friend, isOnline, hadOfflineActivity, canShowFootpr
     // isOnline が true の場合は、現在オンラインなので通常の緑表示を優先する。
     // したがって、hadOfflineActivity が true かつ isOnline が false の場合にのみ紫表示とする。
     if (canShowFootprints && hadOfflineActivity && !isOnline) { // 足跡機能が有効なユーザーで、不在時アクティビティがある場合に紫色
-        nameSpan.style.color = 'purple'; // 不在時にオンラインだった、または現在もオンラインの友達
-        let statusText = isOnline ? i18n[lang].onlineNow : i18n[lang].wasOnline;
+        nameSpan.style.color = 'purple'; // 不在時にオンラインだった友達
+        let statusText = i18n[lang].wasOnline;
         // 課金しておらず、無料期間中の場合に注釈を追加
         if (!isSubscribed && isInFreeTrial) {
             statusText += ` (${i18n[lang].freeTrial})`;
