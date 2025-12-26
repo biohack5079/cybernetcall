@@ -2472,8 +2472,8 @@ async function sendMail() {
     const content = document.getElementById('mailContent').value;
     const nextAccess = document.getElementById('mailNextAccess').value;
 
-    if (!content) {
-        alert("Please enter content.");
+    if (!content && !nextAccess) {
+        alert("Please enter content or select a next access date.");
         return;
     }
 
