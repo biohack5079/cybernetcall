@@ -301,6 +301,45 @@ async function updateFriendLastSeen(friendId, seenTime = null) {
         console.error(`Failed to update lastSeen for friend ${friendId}:`, error);
     }
 }
+async function restoreFriendsFromMails() {
+  if (!dbPromise) return;
+  try {
+    const db = await dbPromise;
+    const mails = await db.getAll('mails');
+    const friends = await db.getAll('friends');
+    const existingFriendIds = new Set(friends.map(f => f.id));
+    const friendsToRestore = new Set();
+
+    const now = new Date();
+    const thirtyDaysInMillis = 30 * 24 * 60 * 60 * 1000;
+
+    mails.forEach(mail => {
+        // 課金中、またはメールが30日以内（お試し期間相当）なら復元対象とする
+        const mailDate = mail.timestamp ? new Date(mail.timestamp) : new Date(0);
+        const shouldRestore = isSubscribed || (now - mailDate) < thirtyDaysInMillis;
+
+        if (shouldRestore) {
+            if (mail.sender && mail.sender !== myDeviceId && !existingFriendIds.has(mail.sender)) {
+                friendsToRestore.add(mail.sender);
+            }
+            if (mail.target && mail.target !== myDeviceId && !existingFriendIds.has(mail.target)) {
+                friendsToRestore.add(mail.target);
+            }
+        }
+    });
+
+    if (friendsToRestore.size > 0) {
+        const tx = db.transaction('friends', 'readwrite');
+        for (const friendId of friendsToRestore) {
+            await tx.store.put({ id: friendId, name: null, added: new Date(), lastSeen: null });
+        }
+        await tx.done;
+        updateStatus(`Restored ${friendsToRestore.size} friends from mail history.`, 'green');
+    }
+  } catch (error) {
+    console.error("Error restoring friends from mails:", error);
+  }
+}
 async function displayFriendList() {
   if (!dbPromise || !friendListElement) return;
   try {
@@ -2601,6 +2640,7 @@ async function main() {
   if (typeof idb === 'undefined' || !dbPromise) {
       updateStatus("Database features disabled. Offline functionality will be limited.", "orange");
   } else {
+      await restoreFriendsFromMails();
       await displayInitialPosts();
       await displayStoredMails();
       await displayFriendList();
