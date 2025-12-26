@@ -12,7 +12,8 @@ const AppState = {
 let currentAppState = AppState.INITIAL;
 let qrElement, statusElement, qrReaderElement, qrResultsElement, localVideoElement, remoteVideoElement, messageAreaElement, postAreaElement;
 let messageInputElement, sendMessageButton, postInputElement, sendPostButton;
-let fileInputElement, sendFileButton, fileTransferStatusElement;
+let directFileInputElement, sendDirectFileButton, directFileTransferStatusElement;
+let groupFileInputElement, sendGroupFileButton, groupFileTransferStatusElement;
 let onlineFriendSelector;
 let callButton, frontCamButton, backCamButton, startScanButton;let remoteVideosContainer;
 let incomingCallModal, callerIdElement, acceptCallButton, rejectCallButton;
@@ -52,10 +53,19 @@ const i18n = {
         offline: "Offline",
         onlineSince: "Online since",
         justNow: "Just now",
-        call: "Call",
+        call: "",
         missedCallFrom: "Missed call from",
         at: "at",
         freeTrial: "Free Trial",
+        mail: "Mail",
+        sendMail: "Send Mail",
+        cancel: "Cancel",
+        nextAccess: "Next Access",
+        mailSent: "Mail sent!",
+        mailReceived: "You got mail!",
+        content: "Content",
+        newMailNotification: "New mail from",
+        clickToView: "Click to view",
     },
     ja: {
         friends: "友達",
@@ -66,10 +76,19 @@ const i18n = {
         offline: "オフライン",
         onlineSince: "接続",
         justNow: "たった今",
-        call: "通話",
+        call: "",
         missedCallFrom: "不在着信 from",
         at: "at", // 必要に応じて変更
         freeTrial: "無料期間",
+        mail: "メール",
+        sendMail: "送信",
+        cancel: "キャンセル",
+        nextAccess: "次回アクセス予定",
+        mailSent: "メールを送信しました！",
+        mailReceived: "メールが届きました！",
+        content: "本文",
+        newMailNotification: "新着メール from",
+        clickToView: "クリックして表示",
     }
 };
 
@@ -83,7 +102,7 @@ let isAttemptingReconnect = false;
 const CHUNK_SIZE = 16384;
 let fileReader;
 const DB_NAME = 'cybernetcall-db';
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 let dbPromise = typeof idb !== 'undefined' ? idb.openDB(DB_NAME, DB_VERSION, {
   upgrade(db, oldVersion) {
     if (!db.objectStoreNames.contains('posts')) {
@@ -95,6 +114,10 @@ let dbPromise = typeof idb !== 'undefined' ? idb.openDB(DB_NAME, DB_VERSION, {
     if (oldVersion < 3 && !db.objectStoreNames.contains('fileChunks')) {
       const store = db.createObjectStore('fileChunks', { keyPath: ['fileId', 'chunkIndex'] });
       store.createIndex('by_fileId', 'fileId');
+    }
+    if (oldVersion < 4 && !db.objectStoreNames.contains('mails')) {
+      const store = db.createObjectStore('mails', { keyPath: 'id' });
+      store.createIndex('by_sender', 'sender');
     }
   }
 }) : null;
@@ -198,9 +221,11 @@ function setInteractionUiEnabled(enabled) {
     if (sendMessageButton) sendMessageButton.disabled = disabled;
     if (postInputElement) postInputElement.disabled = disabled;
     if (sendPostButton) sendPostButton.disabled = disabled;
-    if (fileInputElement) fileInputElement.disabled = disabled;
+    if (directFileInputElement) directFileInputElement.disabled = disabled;
+    if (groupFileInputElement) groupFileInputElement.disabled = disabled;
     if (onlineFriendSelector) onlineFriendSelector.disabled = disabled;
-    if (sendFileButton) sendFileButton.disabled = disabled;
+    if (sendDirectFileButton) sendDirectFileButton.disabled = disabled;
+    if (sendGroupFileButton) sendGroupFileButton.disabled = disabled;
     if (callButton) callButton.disabled = disabled;
     // ビデオ会議がアクティブな場合のみ、カメラボタンの状態を更新
     if (localStream) {
@@ -344,6 +369,17 @@ async function displayInitialPosts() {
   } catch (error) {
   }
 }
+async function displayStoredMails() {
+  if (!dbPromise || !messageAreaElement) return;
+  try {
+    const db = await dbPromise;
+    const mails = await db.getAll('mails');
+    mails.sort((a, b) => new Date(a.timestamp || 0) - new Date(b.timestamp || 0));
+    mails.forEach(mail => displayMailMessage(mail));
+  } catch (error) {
+    console.error("Error displaying stored mails:", error);
+  }
+}
 function displayPost(post, isNew = true) {
   if (!postAreaElement) return;
   const div = document.createElement('div');
@@ -430,8 +466,21 @@ function displaySingleFriend(friend, isOnline, hadOfflineActivity, canShowFootpr
     });
     callFriendButton.disabled = !isOnline;
 
+    const mailButton = document.createElement('button');
+    mailButton.textContent = `✉`;
+    mailButton.className = 'mail-friend-button';
+    mailButton.title = i18n[lang].mail;
+    mailButton.style.marginLeft = '5px';
+    mailButton.onclick = () => openMailModal(friend.id);
+
+    if (!canShowFootprints) {
+        mailButton.disabled = true;
+        mailButton.style.opacity = '0.5';
+    }
+
     div.appendChild(nameSpan);
     div.appendChild(callFriendButton);
+    div.appendChild(mailButton);
     friendListElement.appendChild(div);
 }
 
@@ -497,7 +546,9 @@ async function connectWebSocket() {
             // isSubscribed はページ読み込み時にAPIから取得するため、ここでは何もしない
             // サーバーからの通知（不在着信や友達のオンライン通知）を処理する
             offlineActivityCache.clear(); // 新しい通知を受け取る前にキャッシュをクリア
+            console.log("[DEBUG] Registered payload:", payload);
             if (payload.notifications && Array.isArray(payload.notifications)) {
+                console.log("[DEBUG] Notifications:", payload.notifications);
                 for (const notification of payload.notifications) {
                     if (notification.type === 'missed_call') {
                         displayMissedCallNotification(notification.sender, notification.timestamp);
@@ -526,6 +577,50 @@ async function connectWebSocket() {
                             }
                             updateStatus(statusMessage, 'purple');
                         }
+                    } else if (notification.type === 'new_mail_notification') { // 変更: 'mail' から 'new_mail_notification' へ
+                        const mail = notification.payload || notification;
+                        // サーバーからの通知形式によってsenderやidの場所が異なる場合に対応
+                        if (!mail.sender && notification.sender) {
+                            mail.sender = notification.sender;
+                        }
+                        if (!mail.sender) continue;
+                        if (!mail.id) {
+                            mail.id = notification.id || generateUUID();
+                        }
+                        if (!mail.timestamp && notification.timestamp) {
+                            mail.timestamp = notification.timestamp;
+                        }
+
+                        let db = null;
+                        if (dbPromise) {
+                            try { db = await dbPromise; } catch (e) {}
+                        }
+                        let isInFreeTrial = true;
+                        if (db) {
+                            const friend = await db.get('friends', mail.sender);
+                            if (friend) {
+                                const addedDate = friend.added ? new Date(friend.added) : new Date();
+                                const now = new Date();
+                                const thirtyDaysInMillis = 30 * 24 * 60 * 60 * 1000;
+                                isInFreeTrial = (now - addedDate) < thirtyDaysInMillis;
+                            }
+                        }
+
+                        const canProcessNotification = isSubscribed || isInFreeTrial;
+
+                        if (canProcessNotification) {
+                            if (db) {
+                                try {
+                                    await db.put('mails', mail);
+                                } catch (e) {
+                                    // ここではDBに保存しない。クリック時に保存する
+                                }
+                            }
+                            displayNewMailNotification(mail); // 変更: 直接表示せず、通知を表示
+                            if (document.visibilityState === 'visible') {
+                                playNotificationSound();
+                            }
+                        }
                     }
                 }
             }
@@ -533,7 +628,7 @@ async function connectWebSocket() {
             updateStatus('Connected to signaling server. Ready.', 'green');
             currentAppState = AppState.INITIAL;
             setInteractionUiEnabled(false);
-            await displayFriendList();
+            await Promise.all([displayFriendList(), displayStoredMails()]);
             // 友達との自動接続を開始する
             startAutoConnectFriendsTimer();
             if (pendingConnectionFriendId) {
@@ -628,6 +723,15 @@ async function connectWebSocket() {
                 handleCallBusy(senderUUID);
             }
             break;
+        case 'new_mail_notification': // 変更: 'mail' から 'new_mail_notification' へ
+             console.log("[DEBUG] Realtime new mail notification received:", payload);
+             if (payload && payload.sender && payload.sender !== myDeviceId) {
+                 displayNewMailNotification(payload);
+                 if (document.visibilityState === 'visible') {
+                    playNotificationSound();
+                 }
+             }
+            break;
       }
     } catch (error) {
     }
@@ -687,8 +791,6 @@ function handleWebSocketReconnect() {
 }
 function sendSignalingMessage(message) {
   if (signalingSocket && signalingSocket.readyState === WebSocket.OPEN) {
-    if (!message.payload) message.payload = {};
-    if (!message.payload.uuid) message.payload.uuid = myDeviceId;
     signalingSocket.send(JSON.stringify(message));
   } else {
     updateStatus('Signaling connection not ready.', 'red');
@@ -1203,11 +1305,13 @@ async function processTextMessage(dataString, senderUUID) {
                 incomingFileInfo[message.fileId] = {
                     name: message.name,
                     size: message.size,
-                    type: message.fileType
+                    type: message.fileType,
+                    isBroadcast: message.isBroadcast
                 };
                 receivedSize[message.fileId] = 0;
-                if (fileTransferStatusElement) {
-                    fileTransferStatusElement.textContent = `Receiving ${message.name}... 0%`;
+                const statusElement = message.isBroadcast ? groupFileTransferStatusElement : directFileTransferStatusElement;
+                if (statusElement) {
+                    statusElement.textContent = `Receiving ${message.name}... 0%`;
                 }
                 break;
             case 'file-chunk':
@@ -1224,10 +1328,15 @@ async function processTextMessage(dataString, senderUUID) {
 }
 async function processFileChunk(chunkMeta, chunkDataAsArrayBuffer) {
     const { fileId, index: chunkIndex, last: isLast, senderUUID } = chunkMeta;
-    if (!incomingFileInfo[fileId]) {
+    const fileInfo = incomingFileInfo[fileId];
+    if (!fileInfo) {
       console.error(`Received chunk data for unknown file transfer (no metadata): ${fileId} from ${senderUUID}`);
         return;
     }
+
+    const statusElement = fileInfo.isBroadcast ? groupFileTransferStatusElement : directFileTransferStatusElement;
+    const targetArea = fileInfo.isBroadcast ? postAreaElement : messageAreaElement;
+
     let db;
     try {
         if (!(chunkDataAsArrayBuffer instanceof ArrayBuffer)) {
@@ -1235,7 +1344,7 @@ async function processFileChunk(chunkMeta, chunkDataAsArrayBuffer) {
             return;
         }
         if (!dbPromise) {
-            if (fileTransferStatusElement) fileTransferStatusElement.innerHTML = DOMPurify.sanitize(`DB Error for ${incomingFileInfo[fileId]?.name || 'file'}`);
+            if (statusElement) statusElement.innerHTML = DOMPurify.sanitize(`DB Error for ${fileInfo.name || 'file'}`);
             delete incomingFileInfo[fileId];
             if (receivedSize) delete receivedSize[fileId];
             return;
@@ -1250,41 +1359,46 @@ async function processFileChunk(chunkMeta, chunkDataAsArrayBuffer) {
         let actualReceivedSize = 0;
         allChunksForFileFromDb.forEach(c => actualReceivedSize += c.data.byteLength);
         receivedSize[fileId] = actualReceivedSize;
-        const progress = Math.round((receivedSize[fileId] / incomingFileInfo[fileId].size) * 100);
-        if (fileTransferStatusElement) {
-          fileTransferStatusElement.innerHTML = DOMPurify.sanitize(`Receiving ${incomingFileInfo[fileId].name}... ${progress}%`);
+        const progress = Math.round((receivedSize[fileId] / fileInfo.size) * 100);
+        if (statusElement) {
+          statusElement.innerHTML = DOMPurify.sanitize(`Receiving ${fileInfo.name}... ${progress}%`);
         }
         if (isLast) {
-            if (receivedSize[fileId] !== incomingFileInfo[fileId].size) {
-                if (fileTransferStatusElement) fileTransferStatusElement.innerHTML = DOMPurify.sanitize(`Error assembling ${incomingFileInfo[fileId].name} (final size error)`);
+            if (receivedSize[fileId] !== fileInfo.size) {
+                if (statusElement) statusElement.innerHTML = DOMPurify.sanitize(`Error assembling ${fileInfo.name} (final size error)`);
                 await cleanupFileTransferData(fileId, db);
                 return;
             }
             allChunksForFileFromDb.sort((a, b) => a.chunkIndex - b.chunkIndex);
             if (allChunksForFileFromDb.length !== chunkIndex + 1) {
                  console.warn(`Missing chunks for file ${fileId}. Expected ${chunkIndex + 1}, got ${allChunksForFileFromDb.length} from DB. Cannot assemble.`);
-                 if (fileTransferStatusElement) fileTransferStatusElement.innerHTML = DOMPurify.sanitize(`Error receiving ${incomingFileInfo[fileId].name} (missing chunks from DB)`);
+                 if (statusElement) statusElement.innerHTML = DOMPurify.sanitize(`Error receiving ${fileInfo.name} (missing chunks from DB)`);
                  await cleanupFileTransferData(fileId, db);
                  return;
             }
             const orderedChunkData = allChunksForFileFromDb.map(c => c.data);
-            const fileBlob = new Blob(orderedChunkData, { type: incomingFileInfo[fileId].type });
+            const fileBlob = new Blob(orderedChunkData, { type: fileInfo.type });
+
+            const downloadContainer = document.createElement('div');
+            downloadContainer.className = 'message peer-message';
+
+            const senderName = `File from ${senderUUID.substring(0, 6)}`;
             const downloadLink = document.createElement('a');
             downloadLink.href = URL.createObjectURL(fileBlob);
-            downloadLink.download = incomingFileInfo[fileId].name;
-            downloadLink.textContent = `Download ${incomingFileInfo[fileId].name}`;
-            downloadLink.style.display = 'block';
-            downloadLink.style.marginTop = '5px';
-            if (fileTransferStatusElement) {
-              fileTransferStatusElement.innerHTML = '';
-                fileTransferStatusElement.appendChild(downloadLink);
-            } else {
-                messageAreaElement.appendChild(downloadLink);
-            }
+            downloadLink.download = fileInfo.name;
+            downloadLink.textContent = `Download ${fileInfo.name}`;
+
+            downloadContainer.innerHTML = DOMPurify.sanitize(`<strong>${senderName}:</strong> `);
+            downloadContainer.appendChild(downloadLink);
+
+            if (statusElement) statusElement.innerHTML = '';
+            targetArea.appendChild(downloadContainer);
+            targetArea.scrollTop = targetArea.scrollHeight;
+
             await cleanupFileTransferData(fileId, db, true);
         }
     } catch (error) {
-    if (fileTransferStatusElement) fileTransferStatusElement.innerHTML = DOMPurify.sanitize(`Error processing chunk for ${incomingFileInfo[fileId]?.name || 'unknown file'}`);
+    if (statusElement) statusElement.innerHTML = DOMPurify.sanitize(`Error processing chunk for ${fileInfo?.name || 'unknown file'}`);
     await cleanupFileTransferData(fileId, db);
   }
 }
@@ -1318,6 +1432,19 @@ function sendPrivateMessage(targetPeerUUID, messageString) {
             return true;
         } catch (error) {
             console.error(`Error sending private message to ${targetPeerUUID}:`, error);
+            return false;
+        }
+    }
+    return false;
+}
+function sendPrivateBinaryData(targetPeerUUID, dataBuffer) {
+    const channel = dataChannels[targetPeerUUID];
+    if (channel && channel.readyState === 'open') {
+        try {
+            channel.send(dataBuffer);
+            return true;
+        } catch (error) {
+            console.error(`Error sending binary data to ${targetPeerUUID}:`, error);
             return false;
         }
     }
@@ -1392,6 +1519,99 @@ function displayDirectMessage(message, isOwnMessage = false, senderUUID = null) 
     messageAreaElement.appendChild(div);
     messageAreaElement.scrollTop = messageAreaElement.scrollHeight;
 }
+function displayMailMessage(mail) {
+    if (!messageAreaElement || !mail || !mail.sender) return;
+    
+    // 重複表示を防ぐ
+    const existingElement = document.getElementById(`mail-${mail.id}`);
+    if (existingElement) return;
+
+    const div = document.createElement('div');
+    div.id = `mail-${mail.id}`; // IDを付与して重複チェック可能にする
+    
+    const isOwn = mail.sender === myDeviceId;
+    div.className = isOwn ? 'message own-message' : 'message peer-message';
+    div.style.border = '2px solid purple';
+    div.style.backgroundColor = '#f9f0ff';
+
+    let senderName = `✉ Mail from ${mail.sender.substring(0, 6)}`;
+    if (isOwn) {
+        senderName = `✉ Mail to ${mail.target ? mail.target.substring(0, 6) : 'Peer'}`;
+    }
+
+    const linkedContent = linkify(mail.content);
+    let html = `<strong>${senderName}:</strong><br>${linkedContent}`;
+
+    if (mail.nextAccess) {
+        const dateStr = new Date(mail.nextAccess).toLocaleString();
+        html += `<br><small style="color:purple">📅 ${i18n[getLang()].nextAccess}: ${dateStr}</small>`;
+    }
+    div.innerHTML = DOMPurify.sanitize(html);
+    messageAreaElement.appendChild(div);
+    messageAreaElement.scrollTop = messageAreaElement.scrollHeight;
+}
+
+function displayNewMailNotification(notification) {
+    if (!messageAreaElement || !notification || !notification.mail_id) return;
+    const lang = getLang();
+
+    // 既に同じ通知やメール本体が表示されていないか確認
+    if (document.getElementById(`mail-notification-${notification.mail_id}`) || document.getElementById(`mail-${notification.mail_id}`)) {
+        return;
+    }
+
+    const div = document.createElement('div');
+    div.id = `mail-notification-${notification.mail_id}`;
+    div.className = 'message peer-message mail-notification';
+    div.style.border = '2px solid purple';
+    div.style.backgroundColor = '#f9f0ff';
+    div.style.cursor = 'pointer';
+
+    const senderName = notification.sender ? notification.sender.substring(0, 6) : 'Unknown';
+    div.innerHTML = DOMPurify.sanitize(`<strong>✉ ${i18n[lang].newMailNotification} ${senderName}</strong><br><em>${i18n[lang].clickToView}</em>`);
+
+    div.onclick = () => fetchAndDisplayMail(notification.mail_id);
+
+    messageAreaElement.appendChild(div);
+    messageAreaElement.scrollTop = messageAreaElement.scrollHeight;
+    updateStatus(`${i18n[lang].newMailNotification} ${senderName}`, 'purple');
+}
+
+async function fetchAndDisplayMail(mailId) {
+    if (!mailId) return;
+    const notificationElement = document.getElementById(`mail-notification-${mailId}`);
+    if (notificationElement) {
+        notificationElement.style.cursor = 'default';
+        notificationElement.onclick = null;
+        notificationElement.innerHTML = '<em>Loading mail...</em>';
+    }
+
+    try {
+        // このAPIはサーバー側で実装する必要があります
+        const response = await fetch(`/api/mails/get/${mailId}/`);
+        if (!response.ok) {
+            throw new Error('Failed to fetch mail from server.');
+        }
+        const mail = await response.json();
+
+        if (dbPromise) {
+            const db = await dbPromise;
+            await db.put('mails', mail);
+        }
+
+        // 通知メッセージを実際のメール内容に置き換える（一度削除してから再描画）
+        if (notificationElement) notificationElement.remove();
+        displayMailMessage(mail);
+
+    } catch (error) {
+        console.error("Error fetching mail:", error);
+        if (notificationElement) {
+            notificationElement.innerHTML = `<em style="color:red;">Failed to load mail.</em>`;
+        }
+        updateStatus('Failed to load mail.', 'red');
+    }
+}
+
 async function handleSendPost() {
   const input = postInputElement;
   const content = input?.value?.trim();
@@ -1412,64 +1632,103 @@ async function handleSendPost() {
     if(input) input.value = '';
   }
 }
-function handleSendFile() {
-    if (!fileInputElement || !fileInputElement.files || fileInputElement.files.length === 0) {
+function handleDirectSendFile() {
+    performFileTransfer(false);
+}
+
+function handleGroupSendFile() {
+    performFileTransfer(true);
+}
+
+function performFileTransfer(isBroadcast) {
+    const fileInput = isBroadcast ? groupFileInputElement : directFileInputElement;
+    const statusElement = isBroadcast ? groupFileTransferStatusElement : directFileTransferStatusElement;
+    const sendButton = isBroadcast ? sendGroupFileButton : sendDirectFileButton;
+    const targetPeerId = isBroadcast ? null : selectedPeerId;
+
+    if (!fileInput || !fileInput.files || fileInput.files.length === 0) {
         alert("Please select a file.");
         return;
     }
-    const openChannels = Object.entries(dataChannels).filter(([uuid, dc]) => dc && dc.readyState === 'open');
-    if (openChannels.length === 0) {
-        console.warn("Send file clicked but no open data channels.");
-        alert("Not connected to any peers to send the file.");
+    if (!isBroadcast && !targetPeerId) {
+        alert("Please select a friend to send the file to.");
         return;
     }
-    const file = fileInputElement.files[0];
+
+    const file = fileInput.files[0];
     const snapshottedFileSize = file.size;
     const fileId = generateUUID();
-    if (fileTransferStatusElement) fileTransferStatusElement.innerHTML = DOMPurify.sanitize(`Sending ${file.name}... 0%`);
-    sendFileButton.disabled = true;
+    if (statusElement) statusElement.innerHTML = DOMPurify.sanitize(`Sending ${file.name}... 0%`);
+    sendButton.disabled = true;
     const metadata = {
         type: 'file-metadata',
         fileId: fileId,
         name: file.name,
         size: snapshottedFileSize,
-        fileType: file.type
+        fileType: file.type,
+        isBroadcast: isBroadcast
     };
     const metadataString = JSON.stringify(metadata);
-    if (!broadcastMessage(metadataString)) {
-        alert("Failed to send file metadata to any peer.");
-        sendFileButton.disabled = false;
+
+    let metaSent = false;
+    if (isBroadcast) {
+        metaSent = broadcastMessage(metadataString);
+    } else {
+        metaSent = sendPrivateMessage(targetPeerId, metadataString);
+    }
+
+    if (!metaSent) {
+        const msg = isBroadcast ? "Failed to send file metadata to any peer." : `Failed to send file metadata to ${targetPeerId.substring(0,6)}.`;
+        alert(msg);
+        sendButton.disabled = false;
         return;
     }
-    fileReader = new FileReader();
+
+    // Use local FileReader to avoid conflicts if multiple transfers happen
+    const reader = new FileReader();
     let offset = 0;
     let chunkIndex = 0;
-    fileReader.addEventListener('error', error => {
+
+    reader.addEventListener('error', error => {
         console.error('FileReader error:', error);
         alert('File read error occurred.');
-        if (fileTransferStatusElement) fileTransferStatusElement.innerHTML = DOMPurify.sanitize('File read error');
-        sendFileButton.disabled = false;
+        if (statusElement) statusElement.innerHTML = DOMPurify.sanitize('File read error');
+        sendButton.disabled = false;
     });
-    fileReader.addEventListener('abort', event => {
+    reader.addEventListener('abort', event => {
         console.log('FileReader abort:', event);
-        if (fileTransferStatusElement) fileTransferStatusElement.innerHTML = DOMPurify.sanitize('File send aborted');
-        sendFileButton.disabled = false;
+        if (statusElement) statusElement.innerHTML = DOMPurify.sanitize('File send aborted');
+        sendButton.disabled = false;
     });
-    fileReader.addEventListener('load', e => {
+    reader.addEventListener('load', e => {
         const chunkArrayBuffer = e.target.result;
-        if (openChannels.length > 0) {
-            const firstChannel = openChannels[0][1];
-            const bufferedAmount = firstChannel.bufferedAmount || 0;
-            if (bufferedAmount > CHUNK_SIZE * 16) {
-                setTimeout(() => {
-                    sendFileChunk(chunkArrayBuffer, file.name, snapshottedFileSize, fileId, chunkIndex, offset);
-                }, 200);
-                return;
-            }
+        
+        // Flow control check
+        let canSend = false;
+        if (isBroadcast) {
+            // For broadcast, we check if at least one channel is open. 
+            // Flow control for broadcast is tricky; we'll skip complex bufferedAmount checks for simplicity or check all.
+            // Here we just check if we have open channels.
+            const openChannels = Object.values(dataChannels).filter(dc => dc && dc.readyState === 'open');
+            canSend = openChannels.length > 0;
         } else {
-            console.warn("No open channels to send file chunk.");
-            if (fileTransferStatusElement) fileTransferStatusElement.innerHTML = DOMPurify.sanitize('Connection lost during send');
-            sendFileButton.disabled = false;
+            const channel = dataChannels[targetPeerId];
+            if (channel && channel.readyState === 'open') {
+                // Simple flow control
+                if ((channel.bufferedAmount || 0) > CHUNK_SIZE * 16) {
+                    setTimeout(() => {
+                        sendFileChunk(chunkArrayBuffer, file.name, snapshottedFileSize, fileId, chunkIndex, offset);
+                    }, 200);
+                    return;
+                }
+                canSend = true;
+            }
+        }
+
+        if (!canSend) {
+            console.warn("Channel closed or unavailable during file send.");
+            if (statusElement) statusElement.innerHTML = DOMPurify.sanitize('Connection lost during send');
+            sendButton.disabled = false;
             return;
         }
         sendFileChunk(chunkArrayBuffer, file.name, snapshottedFileSize, fileId, chunkIndex, offset);
@@ -1478,12 +1737,12 @@ function handleSendFile() {
         try {
             const end = Math.min(o + CHUNK_SIZE, snapshottedFileSize);
             const slice = file.slice(o, end);
-            fileReader.readAsArrayBuffer(slice);
+            reader.readAsArrayBuffer(slice);
         } catch (readError) {
              console.error('Error reading file slice:', readError);
              alert('Failed to read file slice.');
-             if (fileTransferStatusElement) fileTransferStatusElement.textContent = 'File slice error';
-             sendFileButton.disabled = false;
+             if (statusElement) statusElement.textContent = 'File slice error';
+             sendButton.disabled = false;
         }
     };
     const sendFileChunk = async (chunkDataAsArrayBuffer, originalFileName, originalFileSizeInLogic, currentFileId, currentChunkIndex, currentOffset, retryCount = 0) => {
@@ -1495,30 +1754,39 @@ function handleSendFile() {
                  last: ((currentOffset + chunkDataAsArrayBuffer.byteLength) >= originalFileSizeInLogic)
              };
              const metaString = JSON.stringify(chunkMetaMessage);
-             if (!broadcastMessage(metaString)) {
-                 if (retryCount < 3) throw new Error(`Failed to send chunk meta ${currentChunkIndex} to any peer.`);
+             
+             let metaSent = false;
+             if (isBroadcast) metaSent = broadcastMessage(metaString);
+             else metaSent = sendPrivateMessage(targetPeerId, metaString);
+
+             if (!metaSent) {
+                 if (retryCount < 3) throw new Error(`Failed to send chunk meta ${currentChunkIndex}.`);
                  else {
                     console.error(`Failed to send chunk meta ${currentChunkIndex} after multiple retries.`);
                  }
              }
              setTimeout(() => {
-                if (!broadcastBinaryData(chunkDataAsArrayBuffer)) {
-                    if (retryCount < 3) throw new Error(`Failed to send chunk data ${currentChunkIndex} to any peer.`);
+                let dataSent = false;
+                if (isBroadcast) dataSent = broadcastBinaryData(chunkDataAsArrayBuffer);
+                else dataSent = sendPrivateBinaryData(targetPeerId, chunkDataAsArrayBuffer);
+
+                if (!dataSent) {
+                    if (retryCount < 3) throw new Error(`Failed to send chunk data ${currentChunkIndex}.`);
                  else {
                     console.error(`Failed to send chunk data ${currentChunkIndex} after multiple retries.`);
                  }
              }
              const newOffset = currentOffset + chunkDataAsArrayBuffer.byteLength;
              const progress = Math.round((newOffset / originalFileSizeInLogic) * 100);
-             if (fileTransferStatusElement) fileTransferStatusElement.textContent = `Sending ${originalFileName}... ${progress}%`;
+             if (statusElement) statusElement.textContent = `Sending ${originalFileName}... ${progress}%`;
              if (newOffset < originalFileSizeInLogic) {
                 offset = newOffset;
                  chunkIndex++;
                  setTimeout(() => readSlice(newOffset), 0);
              } else {
-                 if (fileTransferStatusElement) fileTransferStatusElement.innerHTML = DOMPurify.sanitize(`Sent ${originalFileName}`);
-                 if(fileInputElement) fileInputElement.value = '';
-                 sendFileButton.disabled = false;
+                 if (statusElement) statusElement.innerHTML = DOMPurify.sanitize(`Sent ${originalFileName}`);
+                 if(fileInput) fileInput.value = '';
+                 sendButton.disabled = false;
              }
             }, 10);
         } catch (error) {
@@ -1527,9 +1795,9 @@ function handleSendFile() {
                  setTimeout(() => sendFileChunk(chunkDataAsArrayBuffer, originalFileName, originalFileSizeInLogic, currentFileId, currentChunkIndex, currentOffset, retryCount + 1), 1000 * (retryCount + 1));
              } else {
                  alert(`Failed to send chunk ${currentChunkIndex} after multiple retries.`);
-                 if (fileTransferStatusElement) fileTransferStatusElement.innerHTML = DOMPurify.sanitize('Chunk send error');
+                 if (statusElement) statusElement.innerHTML = DOMPurify.sanitize('Chunk send error');
                  await cleanupFileTransferData(currentFileId, await dbPromise);
-                 sendFileButton.disabled = false;
+                 sendButton.disabled = false;
              }
          }
     }
@@ -2015,7 +2283,8 @@ function setupEventListeners() {
     });
     sendMessageButton?.addEventListener('click', handleSendMessage);
     sendPostButton?.addEventListener('click', handleSendPost);
-    sendFileButton?.addEventListener('click', handleSendFile);
+    sendDirectFileButton?.addEventListener('click', handleDirectSendFile);
+    sendGroupFileButton?.addEventListener('click', handleGroupSendFile);
     callButton?.addEventListener('click', toggleVideoCall);
     frontCamButton?.addEventListener('click', () => handleVideoButtonClick('user'));
     backCamButton?.addEventListener('click', () => handleVideoButtonClick('environment'));
@@ -2104,6 +2373,182 @@ async function handleSubscribeClick() {
     }
 }
 
+let mailModal;
+let currentMailTarget = null;
+
+function createMailModal() {
+    if (document.getElementById('mailModal')) return;
+
+    const modal = document.createElement('div');
+    modal.id = 'mailModal';
+    modal.style.display = 'none';
+    modal.style.position = 'fixed';
+    modal.style.zIndex = '1000';
+    modal.style.left = '0';
+    modal.style.top = '0';
+    modal.style.width = '100%';
+    modal.style.height = '100%';
+    modal.style.overflow = 'auto';
+    modal.style.backgroundColor = 'rgba(0,0,0,0.4)';
+
+    const content = document.createElement('div');
+    content.style.backgroundColor = '#fefefe';
+    content.style.margin = '15% auto';
+    content.style.padding = '20px';
+    content.style.border = '1px solid #888';
+    content.style.width = '80%';
+    content.style.maxWidth = '500px';
+    content.style.borderRadius = '8px';
+
+    const title = document.createElement('h3');
+    title.id = 'mailModalTitle';
+
+    const textArea = document.createElement('textarea');
+    textArea.id = 'mailContent';
+    textArea.style.width = '100%';
+    textArea.style.height = '100px';
+    textArea.style.marginBottom = '10px';
+
+    const dateLabel = document.createElement('label');
+    dateLabel.id = 'mailDateLabel';
+    dateLabel.style.display = 'block';
+    dateLabel.style.marginBottom = '5px';
+
+    const dateInput = document.createElement('input');
+    dateInput.type = 'datetime-local';
+    dateInput.id = 'mailNextAccess';
+    dateInput.style.width = '100%';
+    dateInput.style.marginBottom = '20px';
+
+    const btnContainer = document.createElement('div');
+    btnContainer.style.textAlign = 'right';
+
+    const cancelBtn = document.createElement('button');
+    cancelBtn.id = 'mailCancelBtn';
+    cancelBtn.style.marginRight = '10px';
+    cancelBtn.onclick = closeMailModal;
+
+    const sendBtn = document.createElement('button');
+    sendBtn.id = 'mailSendBtn';
+    sendBtn.onclick = sendMail;
+
+    btnContainer.appendChild(cancelBtn);
+    btnContainer.appendChild(sendBtn);
+
+    content.appendChild(title);
+    content.appendChild(textArea);
+    content.appendChild(dateLabel);
+    content.appendChild(dateInput);
+    content.appendChild(btnContainer);
+
+    modal.appendChild(content);
+    document.body.appendChild(modal);
+    mailModal = modal;
+}
+
+function openMailModal(friendId) {
+    if (!mailModal) createMailModal();
+    currentMailTarget = friendId;
+    const lang = getLang();
+
+    document.getElementById('mailModalTitle').textContent = `${i18n[lang].mail} to ${friendId.substring(0,6)}`;
+    document.getElementById('mailContent').placeholder = i18n[lang].content;
+    document.getElementById('mailDateLabel').textContent = i18n[lang].nextAccess;
+    document.getElementById('mailCancelBtn').textContent = i18n[lang].cancel;
+    document.getElementById('mailSendBtn').textContent = i18n[lang].sendMail;
+    document.getElementById('mailContent').value = '';
+    document.getElementById('mailNextAccess').value = '';
+
+    mailModal.style.display = 'block';
+}
+
+function closeMailModal() {
+    if (mailModal) mailModal.style.display = 'none';
+    currentMailTarget = null;
+}
+
+async function sendMail() {
+    if (!currentMailTarget) return;
+    const content = document.getElementById('mailContent').value;
+    const nextAccess = document.getElementById('mailNextAccess').value;
+
+    if (!content) {
+        alert("Please enter content.");
+        return;
+    }
+
+    const mailData = {
+        id: generateUUID(), // ローカルでの表示と重複チェックのためのクライアント側ID
+        uuid: myDeviceId,
+        sender: myDeviceId,
+        target: currentMailTarget,
+        content: content,
+        nextAccess: nextAccess,
+        timestamp: new Date().toISOString(),
+    };
+
+    // サーバーにメールを送信するためのペイロード
+    const payloadForServer = {
+        sender: myDeviceId,
+        target: currentMailTarget,
+        content: content,
+        next_access: nextAccess, // Django側はsnake_caseを想定
+        client_id: mailData.id
+    };
+
+    updateStatus("Sending mail...", "blue");
+
+    try {
+        const csrfToken = getCookie('csrftoken');
+        const headers = {
+            'Content-Type': 'application/json'
+        };
+        if (csrfToken) {
+            headers['X-CSRFToken'] = csrfToken;
+        }
+
+        // このAPIはサーバー側で実装する必要があります
+        const response = await fetch('/api/mails/send/', {
+            method: 'POST',
+            headers: headers,
+            body: JSON.stringify(payloadForServer)
+        });
+
+        if (!response.ok) {
+            let errorMsg = 'Server returned an error.';
+            try {
+                const errorData = await response.json();
+                errorMsg = errorData.error || errorMsg;
+            } catch (e) {
+                errorMsg = `Server Error: ${response.status} ${response.statusText}`;
+            }
+            throw new Error(errorMsg);
+        }
+
+        // サーバーからのレスポンスでmailDataを更新する（サーバー側IDなど）
+        const responseData = await response.json();
+        Object.assign(mailData, responseData.mail); // サーバーからのデータで上書き
+
+        if (dbPromise) {
+            const db = await dbPromise;
+            await db.put('mails', mailData);
+        }
+        displayMailMessage(mailData);
+        updateStatus(i18n[getLang()].mailSent, 'green');
+        closeMailModal();
+    } catch (error) {
+        console.error("Failed to send mail via API:", error);
+        updateStatus(`Failed to send mail: ${error.message}. Saved locally.`, 'red');
+        // オフライン時やAPIエラー時は、とりあえずローカルに保存して表示する
+        if (dbPromise) {
+            const db = await dbPromise;
+            await db.put('mails', mailData);
+        }
+        displayMailMessage(mailData);
+        closeMailModal();
+    }
+}
+
 async function main() {
   updateStatus('Initializing...', 'black');
 
@@ -2157,6 +2602,7 @@ async function main() {
       updateStatus("Database features disabled. Offline functionality will be limited.", "orange");
   } else {
       await displayInitialPosts();
+      await displayStoredMails();
       await displayFriendList();
   }
 
@@ -2179,6 +2625,18 @@ async function main() {
   }
 }
 
+// デバッグ用: コンソールから window.debugDumpMails() を実行してDBの中身を確認
+window.debugDumpMails = async () => {
+    if (!dbPromise) {
+        console.log("Database not ready.");
+        return;
+    }
+    const db = await dbPromise;
+    const mails = await db.getAll('mails');
+    console.table(mails);
+    console.log("Total mails in DB:", mails.length);
+};
+
 document.addEventListener('DOMContentLoaded', () => {
     // 1. DOM要素の取得
     qrElement = document.getElementById('qrcode');
@@ -2200,10 +2658,13 @@ document.addEventListener('DOMContentLoaded', () => {
     sendMessageButton = document.getElementById('sendMessage');
     postInputElement = document.getElementById('postInput');
     sendPostButton = document.getElementById('sendPost');
-    fileInputElement = document.getElementById('fileInput');
+    directFileInputElement = document.getElementById('directFileInput');
+    groupFileInputElement = document.getElementById('groupFileInput');
     onlineFriendSelector = document.getElementById('onlineFriendSelector');
-    sendFileButton = document.getElementById('sendFile');
-    fileTransferStatusElement = document.getElementById('file-transfer-status');
+    sendDirectFileButton = document.getElementById('sendDirectFile');
+    sendGroupFileButton = document.getElementById('sendGroupFile');
+    directFileTransferStatusElement = document.getElementById('direct-file-transfer-status');
+    groupFileTransferStatusElement = document.getElementById('group-file-transfer-status');
     callButton = document.getElementById('callButton');
     frontCamButton = document.getElementById('frontCamButton');
     backCamButton = document.getElementById('backCamButton');
@@ -2219,6 +2680,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // 2. UIイベントリスナーのセットアップ
     setupEventListeners();
+    createMailModal();
     // Service Workerの登録
 
     onlineFriendSelector?.addEventListener('change', (event) => {

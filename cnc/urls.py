@@ -11,4 +11,6 @@ urlpatterns = [
     path("api/stripe/subscription-status/", views.SubscriptionStatusView.as_view(), name="subscription_status"),
     path("api/stripe/create-checkout-session/", views.CreateCheckoutSessionView.as_view(), name="create_checkout_session"),
     path("api/stripe/webhook/", views.StripeWebhookView.as_view(), name="stripe_webhook"),
+    path('api/mails/send/', views.send_mail_api, name='send_mail_api'),
+    path('api/mails/get/<str:mail_id>/', views.get_mail_api, name='get_mail_api'),
 ]

@@ -81,3 +81,15 @@ class StripeCustomer(models.Model):
 
     def __str__(self):
         return f"Stripe Customer for {self.user_uuid[:8]} ({self.subscription_status})"
+
+class Mail(models.Model):
+    id = models.CharField(max_length=100, primary_key=True)
+    sender = models.CharField(max_length=100)
+    target = models.CharField(max_length=100)
+    content = models.TextField()
+    next_access = models.CharField(max_length=100, blank=True, null=True)
+    timestamp = models.DateTimeField(auto_now_add=True)
+    is_read = models.BooleanField(default=False)
+
+    def __str__(self):
+        return f"Mail {self.id} from {self.sender}"

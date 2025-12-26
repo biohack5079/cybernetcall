@@ -21,12 +21,16 @@ git push -u origin main
 
 
 ### 再migration
+pip install -r requirements.txt
 # cnc/migrations/ ディレクトリに移動
 cd cnc/migrations/
 # __init__.py 以外のすべてのファイルを削除
 find . -type f -not -name '__init__.py' -delete
 # 元のディレクトリに戻る
 cd ../../
+
+# データベースをリセット（既存のテーブルと競合しないように削除）
+rm db.sqlite3
 
 python3 manage.py makemigrations cnc
 python3 manage.py migrate
@@ -44,5 +48,3 @@ DEBUG = env.bool('DJANGO_DEBUG', default=True)
 
 ### Start Command
  python manage.py migrate && daphne -b 0.0.0.0 -p 10000 cybernetcall.asgi:application
-
-

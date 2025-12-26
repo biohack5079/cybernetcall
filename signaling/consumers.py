@@ -5,7 +5,7 @@ from channels.db import database_sync_to_async
 from django.conf import settings
 from pywebpush import webpush, WebPushException
 import redis.asyncio as redis
-from cnc.models import Notification, PushSubscription
+from cnc.models import Notification, PushSubscription, Mail
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +28,7 @@ class SignalingConsumer(AsyncWebsocketConsumer):
             await self.channel_layer.group_discard(self.broadcast_group_name, self.channel_name)
             # Redisからオンラインユーザーを削除
             await self.remove_online_user_from_redis(self.user_uuid)
-            await self.channel_layer.group_discard(self.user_uuid, self.channel_name)
+            await self.channel_layer.group_discard(f"user_{self.user_uuid}", self.channel_name)
             
             await self.broadcast({
                 'type': 'user_left',
@@ -86,7 +86,7 @@ class SignalingConsumer(AsyncWebsocketConsumer):
             self.user_uuid = user_uuid
 
             # ユーザー固有のグループと、全体通知用のグループに参加
-            await self.channel_layer.group_add(self.user_uuid, self.channel_name)
+            await self.channel_layer.group_add(f"user_{self.user_uuid}", self.channel_name)
             await self.channel_layer.group_add(self.broadcast_group_name, self.channel_name)
             # Redisにオンラインユーザーとして追加
             await self.add_online_user_to_redis(self.user_uuid)
@@ -95,6 +95,16 @@ class SignalingConsumer(AsyncWebsocketConsumer):
 
             # 未配信の通知を取得
             notifications = await self.get_undelivered_notifications(self.user_uuid)
+
+            # 未読メールの通知を取得
+            unread_mails = await self.get_unread_mails(self.user_uuid)
+            for mail in unread_mails:
+                notifications.append({
+                    'type': 'new_mail_notification',
+                    'mail_id': str(mail.id),
+                    'sender': mail.sender,
+                    'timestamp': mail.timestamp.isoformat()
+                })
 
             # 登録完了メッセージを送信（通知も含む）
             await self.send(text_data=json.dumps({
@@ -184,7 +194,7 @@ class SignalingConsumer(AsyncWebsocketConsumer):
         }
         # ユーザー固有のグループに送信
         await self.channel_layer.group_send(
-            target_uuid,
+            f"user_{target_uuid}",
             {
                 'type': 'signal_message',
                 'message': forward_message
@@ -192,6 +202,16 @@ class SignalingConsumer(AsyncWebsocketConsumer):
         )
 
     # --- データベース操作 (非同期) ---
+
+    async def send_notification(self, event):
+        """
+        views.pyから呼び出され、リアルタイムで通知を送信するハンドラ
+        """
+        notification_data = event["notification"]
+        await self.send(text_data=json.dumps({
+            "type": notification_data.get("type"),
+            "payload": notification_data
+        }))
 
     @database_sync_to_async
     def get_undelivered_notifications(self, recipient_uuid):
@@ -208,6 +228,11 @@ class SignalingConsumer(AsyncWebsocketConsumer):
             }
             for notif in notifications
         ]
+
+    @database_sync_to_async
+    def get_unread_mails(self, user_uuid):
+        """ユーザー宛の未読メールをタイムスタンプ順で取得"""
+        return list(Mail.objects.filter(target=user_uuid, is_read=False).order_by('timestamp'))
 
     @database_sync_to_async
     def mark_notifications_as_delivered(self, recipient_uuid):

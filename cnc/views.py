@@ -5,9 +5,11 @@ from django.shortcuts import render
 from django.conf import settings
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
-from .models import PushSubscription
+from .models import PushSubscription, Mail
 from datetime import datetime, timezone
 from .models import StripeCustomer
+from channels.layers import get_channel_layer
+from asgiref.sync import async_to_sync
 import stripe
 
 
@@ -183,3 +185,61 @@ class StripeWebhookView(View):
                 pass
 
         return JsonResponse({'status': 'success'})
+
+
+@csrf_exempt
+def send_mail_api(request):
+    if request.method == 'POST':
+        try:
+            data = json.loads(request.body)
+            # DBにメールを保存
+            mail = Mail.objects.create(
+                id=data['client_id'],
+                sender=data['sender'],
+                target=data['target'],
+                content=data['content'],
+                next_access=data.get('next_access')
+            )
+            
+            # 相手にWebSocketで通知を送る
+            channel_layer = get_channel_layer()
+            async_to_sync(channel_layer.group_send)(
+                f"user_{data['target']}", # 相手のグループ名 (consumers.pyの実装に合わせる)
+                {
+                    "type": "send_notification", # consumers.pyのハンドラ名
+                    "notification": {
+                        "type": "new_mail_notification",
+                        "mail_id": str(mail.id),
+                        "sender": mail.sender,
+                        "timestamp": mail.timestamp.isoformat()
+                    }
+                }
+            )
+            
+            return JsonResponse({'status': 'success', 'mail': {
+                'id': mail.id,
+                'timestamp': mail.timestamp.isoformat()
+            }})
+        except Exception as e:
+            return JsonResponse({'error': str(e)}, status=500)
+    return JsonResponse({'error': 'Invalid method'}, status=405)
+
+
+def get_mail_api(request, mail_id):
+    try:
+        mail = Mail.objects.get(id=mail_id)
+        # メールを既読にする
+        if not mail.is_read:
+            mail.is_read = True
+            mail.save()
+
+        return JsonResponse({
+            'id': mail.id,
+            'sender': mail.sender,
+            'target': mail.target,
+            'content': mail.content,
+            'nextAccess': mail.next_access,
+            'timestamp': mail.timestamp.isoformat()
+        })
+    except Mail.DoesNotExist:
+        return JsonResponse({'error': 'Mail not found'}, status=404)
