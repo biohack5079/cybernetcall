@@ -2385,9 +2385,9 @@ async function handleSubscribeClick() {
     const stripe = Stripe(stripePublicKey);
 
     // ユーザーのブラウザ言語設定から通貨を決定 (日本語ならjpy, それ以外はusd)
-    const currency = getLang() === 'ja' ? 'jpy' : 'usd';
+    let currency = getLang() === 'ja' ? 'jpy' : 'usd';
 
-    try {
+    const createSession = async (curr) => {
         const response = await fetch('/api/stripe/create-checkout-session/', {
             method: 'POST',
             headers: {
@@ -2395,9 +2395,21 @@ async function handleSubscribeClick() {
                 'X-CSRFToken': getCookie('csrftoken'),
                 'Accept': 'application/json'
             },
-            body: JSON.stringify({ user_id: myDeviceId, currency: currency })
+            body: JSON.stringify({ user_id: myDeviceId, currency: curr })
         });
-        const session = await response.json();
+        return await response.json();
+    };
+
+    try {
+        let session = await createSession(currency);
+
+        // 通貨の競合エラー（既存顧客が別通貨を持っている場合）をチェックし、必要ならフォールバック
+        if (!session.id && session.error && typeof session.error === 'string' && session.error.includes('combine currencies')) {
+            console.warn(`Currency conflict detected (${currency}). Retrying with alternative currency.`);
+            currency = currency === 'jpy' ? 'usd' : 'jpy';
+            session = await createSession(currency);
+        }
+
         if (session.id) {
             await stripe.redirectToCheckout({ sessionId: session.id });
         } else {
