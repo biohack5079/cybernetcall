@@ -648,13 +648,8 @@ async function connectWebSocket() {
                         const canProcessNotification = isSubscribed || isInFreeTrial;
 
                         if (canProcessNotification) {
-                            if (db) {
-                                try {
-                                    await db.put('mails', mail);
-                                } catch (e) {
-                                    // ここではDBに保存しない。クリック時に保存する
-                                }
-                            }
+                            // 通知の段階ではDBに保存しない。
+                            // ここで保存すると displayStoredMails() で表示されてしまい、通知と重複するため。
                             displayNewMailNotification(mail); // 変更: 直接表示せず、通知を表示
                             if (document.visibilityState === 'visible') {
                                 playNotificationSound();
