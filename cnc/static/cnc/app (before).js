@@ -41,8 +41,6 @@ const NEGOTIATION_TIMEOUT_MS = 3000;
 let wsReconnectAttempts = 0;
 const MAX_WS_RECONNECT_ATTEMPTS = 10;
 const INITIAL_WS_RECONNECT_DELAY_MS = 2000;
-let activeCallFriendId = null; // 現在通話中の友達ID
-let peerCallTypes = {}; // ピアごとの通話タイプ ('private' | 'meeting' | 'data')
 
 // i18n (Internationalization) support
 const i18n = {
@@ -529,7 +527,7 @@ function displaySingleFriend(friend, isOnline, hadOfflineActivity, canShowFootpr
     videoButton.addEventListener('click', async (event) => {
         const friendId = event.target.dataset.friendId;
         if (friendId) {
-            await togglePrivateVideoCall(friendId);
+            await toggleVideoCall(friendId);
         }
     });
     videoButton.disabled = !isOnline;
@@ -540,66 +538,6 @@ function displaySingleFriend(friend, isOnline, hadOfflineActivity, canShowFootpr
 
     div.appendChild(nameSpan);
     div.appendChild(buttonsContainer);
-
-    // --- ビデオ通話用インターフェース（友達リスト内に統合） ---
-    const videoInterface = document.createElement('div');
-    videoInterface.id = `video-interface-${friend.id}`;
-    videoInterface.style.display = 'none';
-    videoInterface.style.marginTop = '10px';
-    videoInterface.style.padding = '10px';
-    videoInterface.style.border = '1px solid #ccc';
-    videoInterface.style.borderRadius = '8px';
-    videoInterface.style.backgroundColor = '#f0f0f0';
-
-    // カメラ切り替えボタン
-    const cameraControls = document.createElement('div');
-    cameraControls.style.marginBottom = '5px';
-    const frontCamBtn = document.createElement('button');
-    frontCamBtn.textContent = 'Front 📷';
-    frontCamBtn.onclick = () => handleCameraAction(friend.id, 'user');
-    frontCamBtn.style.marginRight = '5px';
-    const backCamBtn = document.createElement('button');
-    backCamBtn.textContent = 'Back 📷';
-    backCamBtn.onclick = () => handleCameraAction(friend.id, 'environment');
-    cameraControls.appendChild(frontCamBtn);
-    cameraControls.appendChild(backCamBtn);
-
-    // 自分の映像（ローカル）
-    const localVideo = document.createElement('video');
-    localVideo.id = `local-video-${friend.id}`;
-    localVideo.autoplay = true;
-    localVideo.muted = true;
-    localVideo.playsInline = true;
-    localVideo.style.width = '100px'; // サムネイルサイズ
-    localVideo.style.border = '1px solid #333';
-    localVideo.style.marginBottom = '5px';
-
-    // 相手の映像（リモート）コンテナ
-    const remoteVideoContainer = document.createElement('div');
-    remoteVideoContainer.id = `remote-video-container-${friend.id}`;
-    remoteVideoContainer.style.width = '100%';
-    remoteVideoContainer.style.minHeight = '200px';
-    remoteVideoContainer.style.backgroundColor = '#000';
-    remoteVideoContainer.style.marginBottom = '10px';
-    remoteVideoContainer.style.display = 'flex';
-    remoteVideoContainer.style.justifyContent = 'center';
-    remoteVideoContainer.style.alignItems = 'center';
-
-    // 通話終了ボタン
-    const endCallBtn = document.createElement('button');
-    endCallBtn.textContent = 'End Call';
-    endCallBtn.style.backgroundColor = '#ff4444';
-    endCallBtn.style.color = 'white';
-    endCallBtn.style.width = '100%';
-    endCallBtn.onclick = () => stopPrivateVideoCall(friend.id);
-
-    videoInterface.appendChild(cameraControls);
-    videoInterface.appendChild(localVideo);
-    videoInterface.appendChild(remoteVideoContainer);
-    videoInterface.appendChild(endCallBtn);
-
-    div.appendChild(videoInterface);
-
     friendListElement.appendChild(div);
 }
 
@@ -802,7 +740,7 @@ async function connectWebSocket() {
             break;
         case 'offer':
             if (senderUUID) {
-                await handleOfferAndCreateAnswer(senderUUID, payload.sdp, payload.call_type);
+                await handleOfferAndCreateAnswer(senderUUID, payload.sdp);
             }
             break;
         case 'answer':
@@ -1021,7 +959,7 @@ function clearNegotiationTimeout(peerUUID) {
         delete peerNegotiationTimers[peerUUID];
     }
 }
-async function createPeerConnection(peerUUID, callType = 'data') {
+async function createPeerConnection(peerUUID) {
   if (peers[peerUUID]) {
     console.warn(`Closing existing PeerConnection for ${peerUUID}.`);
     closePeerConnection(peerUUID, true);
@@ -1047,14 +985,7 @@ async function createPeerConnection(peerUUID, callType = 'data') {
       setupDataChannelEvents(peerUUID, channel);
     };
     peer.ontrack = (event) => {
-      // callTypeに応じてハンドラを完全に分離
-      const currentCallType = peerCallTypes[peerUUID] || callType;
-      if (currentCallType === 'private') {
-          handlePrivateRemoteTrack(peerUUID, event.track, event.streams[0]);
-      } else if (currentCallType === 'meeting') {
-          handleMeetingRemoteTrack(peerUUID, event.track, event.streams[0]);
-      }
-      // 'data' の場合はビデオトラックを処理しない（無視する）
+      handleRemoteTrack(peerUUID, event.track, event.streams[0]);
     };
     peer.onconnectionstatechange = async () => {
       switch (peer.connectionState) {
@@ -1165,29 +1096,13 @@ function setupDataChannelEvents(peerUUID, channel) {
 }
 async function createOfferForPeer(peerUUID, isReconnectAttempt = false) {
     currentAppState = AppState.CONNECTING;
-    
-    // 接続作成前にcallTypeを決定する
-    let callType = 'data';
-    if (activeCallFriendId === peerUUID) {
-        callType = 'private';
-    } else if (localStream && !activeCallFriendId) {
-        callType = 'meeting';
-    }
-
-    const peer = await createPeerConnection(peerUUID, callType);
+    const peer = await createPeerConnection(peerUUID);
     if (!peer) return;
     const offerSdp = await createOfferAndSetLocal(peerUUID);
     if (offerSdp) {
-        let callType = 'data';
-        if (activeCallFriendId === peerUUID) {
-            callType = 'private';
-        } else if (localStream) {
-            callType = 'meeting';
-        }
-        peerCallTypes[peerUUID] = callType;
         sendSignalingMessage({
             type: 'offer',
-            payload: { target: peerUUID, sdp: offerSdp, call_type: callType }
+            payload: { target: peerUUID, sdp: offerSdp }
         });
         setNegotiationTimeout(peerUUID);
     } else {
@@ -1218,15 +1133,12 @@ async function createOfferAndSetLocal(peerUUID) {
     return null;
   }
 }
-async function handleOfferAndCreateAnswer(peerUUID, offerSdp, callType) {
-  if (callType) {
-      peerCallTypes[peerUUID] = callType;
-  }
+async function handleOfferAndCreateAnswer(peerUUID, offerSdp) {
   let peer = peers[peerUUID];
   const isRenegotiation = !!peer;
   if (!isRenegotiation) {
     iceCandidateQueue[peerUUID] = [];
-    peer = await createPeerConnection(peerUUID, callType);
+    peer = await createPeerConnection(peerUUID);
     if (!peer) {
         return;
     }
@@ -1234,17 +1146,6 @@ async function handleOfferAndCreateAnswer(peerUUID, offerSdp, callType) {
     if (!alreadyFriend) {
         await addFriend(peerUUID);
     }
-  } else {
-      // 既存の接続がある場合でも、新しいcallTypeに合わせてontrackハンドラを更新する
-      if (callType) {
-          peer.ontrack = (event) => {
-              if (callType === 'private') {
-                  handlePrivateRemoteTrack(peerUUID, event.track, event.streams[0]);
-              } else if (callType === 'meeting') {
-                  handleMeetingRemoteTrack(peerUUID, event.track, event.streams[0]);
-              }
-          };
-      }
   }
   try {
     await peer.setRemoteDescription(new RTCSessionDescription(offerSdp));
@@ -1371,8 +1272,6 @@ function resetConnection() {
     if (fileTransferStatusElement) fileTransferStatusElement.textContent = '';
     currentCallerId = null;
     if (incomingCallModal) incomingCallModal.style.display = 'none';
-    activeCallFriendId = null;
-    peerCallTypes = {};
     if(qrReaderElement) qrReaderElement.style.display = 'none';
     if(startScanButton) startScanButton.disabled = false;
     updateStatus('Ready. Add friends or wait for connection.', 'black');
@@ -1398,7 +1297,6 @@ function closePeerConnection(peerUUID, silent = false) {
         }
         delete peers[peerUUID];
         delete iceCandidateQueue[peerUUID];
-        delete peerCallTypes[peerUUID];
     }
     const channel = dataChannels[peerUUID];
     if (channel) {
@@ -1410,17 +1308,6 @@ function closePeerConnection(peerUUID, silent = false) {
     const videoElement = document.getElementById(`remoteVideo-${peerUUID}`);
     if (videoElement) {
         videoElement.remove();
-    }
-    const privateVideo = document.getElementById(`private-video-${peerUUID}`);
-    if (privateVideo) privateVideo.remove();
-    const meetingVideo = document.getElementById(`meeting-video-${peerUUID}`);
-    if (meetingVideo) meetingVideo.remove();
-    const oldVideo = document.getElementById(`remoteVideo-${peerUUID}`);
-    if (oldVideo) oldVideo.remove();
-    // UIをリセット（非表示にするなど）
-    const interfaceDiv = document.getElementById(`video-interface-${peerUUID}`);
-    if (interfaceDiv) {
-        interfaceDiv.style.display = 'none';
     }
     if (!silent) {
         const connectedPeersCount = Object.values(peers).filter(p => p?.connectionState === 'connected').length;
@@ -1968,149 +1855,6 @@ function performFileTransfer(isBroadcast) {
     }
     readSlice(0);
 }
-
-async function togglePrivateVideoCall(friendId) {
-    if (localStream && !activeCallFriendId) {
-        alert("You are currently in a Video Meeting. Please end it before starting a private call.");
-        return;
-    }
-
-    if (activeCallFriendId && activeCallFriendId !== friendId) {
-        alert("You are already in a call. Please end it first.");
-        return;
-    }
-
-    const interfaceDiv = document.getElementById(`video-interface-${friendId}`);
-    if (!interfaceDiv) return;
-
-    if (interfaceDiv.style.display === 'none') {
-        // 通話開始
-        activeCallFriendId = friendId;
-        interfaceDiv.style.display = 'block';
-    } else {
-        // 通話終了
-        await stopPrivateVideoCall(friendId);
-    }
-}
-
-async function handleCameraAction(friendId, facingMode) {
-    if (!localStream) {
-        await startPrivateVideoCall(friendId, facingMode);
-    } else {
-        await switchPrivateCamera(friendId, facingMode);
-    }
-}
-
-async function startPrivateVideoCall(friendId, facingMode = 'user') {
-    // ターゲットとのP2P接続確認
-    if (!peers[friendId] || peers[friendId].connectionState !== 'connected') {
-        updateStatus(`Connecting to ${friendId.substring(0, 6)}...`, 'blue');
-        await createOfferForPeer(friendId);
-        await new Promise(resolve => setTimeout(resolve, 2000));
-        if (!peers[friendId] || peers[friendId].connectionState !== 'connected') {
-            updateStatus(`Failed to connect.`, 'red');
-            stopPrivateVideoCall(friendId);
-            return;
-        }
-    }
-
-    try {
-        // ローカルストリームの取得
-        let stream;
-        try {
-             const constraints = facingMode === 'environment' ? { audio: true, video: { facingMode: { exact: 'environment' } } } : { audio: true, video: { facingMode: 'user' } };
-             stream = await navigator.mediaDevices.getUserMedia(constraints);
-        } catch(e) {
-             stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: { facingMode: facingMode } });
-        }
-        localStream = stream;
-        
-        // 友達リスト内の自分のビデオ要素にセット
-        const localVideo = document.getElementById(`local-video-${friendId}`);
-        if (localVideo) {
-            localVideo.srcObject = localStream;
-        }
-
-        // 特定の友達にのみトラックを追加
-        const peer = peers[friendId];
-        if (peer) {
-            localStream.getTracks().forEach(track => {
-                peer.addTrack(track, localStream);
-            });
-            await createAndSendOfferForRenegotiation(friendId, peer);
-        }
-        updateStatus(`Video call started with ${friendId.substring(0, 6)}`, 'green');
-    } catch (error) {
-        console.error("Error starting private video call:", error);
-        alert(`Could not start video: ${error.message}`);
-        stopPrivateVideoCall(friendId);
-    }
-}
-
-async function stopPrivateVideoCall(friendId) {
-    if (localStream) {
-        localStream.getTracks().forEach(track => track.stop());
-        localStream = null;
-    }
-
-    const peer = peers[friendId];
-    if (peer) {
-        peer.getSenders().forEach(sender => peer.removeTrack(sender));
-        await createAndSendOfferForRenegotiation(friendId, peer);
-    }
-
-    const interfaceDiv = document.getElementById(`video-interface-${friendId}`);
-    if (interfaceDiv) interfaceDiv.style.display = 'none';
-    
-    activeCallFriendId = null;
-    updateStatus('Call ended.', 'orange');
-}
-
-async function switchPrivateCamera(friendId, facingMode) {
-    if (activeCallFriendId !== friendId || !localStream) return;
-
-    try {
-        // Android等では複数のカメラストリームを同時に開けないため、先に既存のトラックを停止する
-        const oldVideoTrack = localStream.getVideoTracks()[0];
-        if (oldVideoTrack) {
-            oldVideoTrack.stop();
-            localStream.removeTrack(oldVideoTrack);
-        }
-
-        let videoStream;
-        try {
-            // 背面カメラ指定の場合は exact を使用して確実に切り替える
-            const constraints = facingMode === 'environment' ? { video: { facingMode: { exact: 'environment' } } } : { video: { facingMode: 'user' } };
-            videoStream = await navigator.mediaDevices.getUserMedia(constraints);
-        } catch (e) {
-            // 失敗した場合は制約を緩めて再試行
-            videoStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: facingMode } });
-        }
-
-        const newVideoTrack = videoStream.getVideoTracks()[0];
-        localStream.addTrack(newVideoTrack);
-
-        const localVideo = document.getElementById(`local-video-${friendId}`);
-        if (localVideo) {
-            localVideo.srcObject = localStream;
-        }
-
-        const peer = peers[friendId];
-        if (peer) {
-            const sender = peer.getSenders().find(s => s.track && s.track.kind === 'video');
-            if (sender) {
-                await sender.replaceTrack(newVideoTrack);
-            } else {
-                peer.addTrack(newVideoTrack, localStream);
-                await createAndSendOfferForRenegotiation(friendId, peer);
-            }
-        }
-    } catch (error) {
-        console.error("Error switching camera:", error);
-        alert(`Error switching camera: ${error.message}`);
-    }
-}
-
 async function toggleAudioCall(targetPeerUUID) {
     // ターゲットとのP2P接続がなければ、まず接続を試みる
     if (!peers[targetPeerUUID] || peers[targetPeerUUID].connectionState !== 'connected') {
@@ -2159,16 +1903,6 @@ async function toggleAudioCall(targetPeerUUID) {
     }
 }
 async function toggleVideoCall(targetPeerUUID = null) {
-    // イベントリスナーから呼ばれた場合、targetPeerUUIDはEventオブジェクトになるため、文字列でない場合はnullにする
-    if (targetPeerUUID && typeof targetPeerUUID !== 'string') {
-        targetPeerUUID = null;
-    }
-
-    if (activeCallFriendId) {
-        alert("You are currently in a private call. Please end it before starting a Video Meeting.");
-        return;
-    }
-
     // ターゲットとのP2P接続がなければ、まず接続を試みる
     if (targetPeerUUID && (!peers[targetPeerUUID] || peers[targetPeerUUID].connectionState !== 'connected')) {
         updateStatus(`Connecting to ${targetPeerUUID.substring(0, 6)} for a video call...`, 'blue');
@@ -2231,16 +1965,9 @@ async function createAndSendOfferForRenegotiation(peerUUID, peer) {
     try {
         const offer = await peer.createOffer();
         await peer.setLocalDescription(offer);
-        let callType = 'data';
-        if (activeCallFriendId === peerUUID) {
-            callType = 'private';
-        } else if (localStream) {
-            callType = 'meeting';
-        }
-        peerCallTypes[peerUUID] = callType;
         sendSignalingMessage({
             type: 'offer',
-            payload: { target: peerUUID, sdp: peer.localDescription, call_type: callType }
+            payload: { target: peerUUID, sdp: peer.localDescription }
         });
         setNegotiationTimeout(peerUUID);
     } catch (error) {
@@ -2343,60 +2070,20 @@ async function removeAllTracksFromAllPeers() {
     await Promise.all(renegotiationPromises);
 }
 
-// プライベート通話専用のトラックハンドラ
-function handlePrivateRemoteTrack(peerUUID, track, stream) {
-    const friendVideoInterface = document.getElementById(`video-interface-${peerUUID}`);
-    const container = document.getElementById(`remote-video-container-${peerUUID}`);
-
-    if (!container) {
-        console.warn(`Private video container for ${peerUUID} not found.`);
+function handleRemoteTrack(peerUUID, track, stream) {
+    if (!remoteVideosContainer) {
+        console.warn("Remote videos container not found.");
         return;
     }
-
-    // UIが閉じていたら自動で開く（着信時の自動表示）
-    if (friendVideoInterface && friendVideoInterface.style.display === 'none') {
-        friendVideoInterface.style.display = 'block';
-        activeCallFriendId = peerUUID; // 通話状態にする
-        updateStatus(`Incoming private video from ${peerUUID.substring(0, 6)}`, 'blue');
-    }
-
-    let videoElement = document.getElementById(`private-video-${peerUUID}`);
+    let videoElement = document.getElementById(`remoteVideo-${peerUUID}`);
     if (!videoElement) {
-        console.log(`Creating private video element for ${peerUUID}`);
+        console.log(`Creating video element for ${peerUUID}`);
         videoElement = document.createElement('video');
-        videoElement.id = `private-video-${peerUUID}`;
+        videoElement.id = `remoteVideo-${peerUUID}`;
         videoElement.autoplay = true;
         videoElement.playsInline = true;
-        videoElement.style.width = '100%';
-        container.appendChild(videoElement);
+        remoteVideosContainer.appendChild(videoElement);
     }
-    attachStreamToVideo(videoElement, stream, track);
-}
-
-// GroupMeeting専用のトラックハンドラ
-function handleMeetingRemoteTrack(peerUUID, track, stream) {
-    const container = remoteVideosContainer;
-    if (!container) {
-        console.warn("Meeting video container not found.");
-        return;
-    }
-
-    let videoElement = document.getElementById(`meeting-video-${peerUUID}`);
-    if (!videoElement) {
-        console.log(`Creating meeting video element for ${peerUUID}`);
-        videoElement = document.createElement('video');
-        videoElement.id = `meeting-video-${peerUUID}`;
-        videoElement.autoplay = true;
-        videoElement.playsInline = true;
-        videoElement.style.width = '100%';
-        // Meeting用のスタイル（CSSクラス等で制御されている前提、またはここで指定）
-        container.appendChild(videoElement);
-    }
-    attachStreamToVideo(videoElement, stream, track);
-}
-
-// 共通のストリーム割り当てヘルパー関数
-function attachStreamToVideo(videoElement, stream, track) {
     if (!videoElement.srcObject && stream) {
         videoElement.srcObject = stream;
     } else if (videoElement.srcObject) {
@@ -2404,15 +2091,10 @@ function attachStreamToVideo(videoElement, stream, track) {
             videoElement.srcObject.addTrack(track);
         }
     } else {
-        console.warn("Could not set srcObject - no stream provided?");
+        console.warn(`Could not set srcObject for ${peerUUID} - no stream provided?`);
     }
-    // Androidなどで再生を開始するために明示的にplayを呼ぶ
-    videoElement.play().catch(e => console.error("Error playing video:", e));
 }
 function updateQrCodeWithValue(value) {
-    if (!qrElement) {
-        qrElement = document.getElementById('qrcode');
-    }
     if (!qrElement) {
         console.warn("QR element not available for update.");
         return;
@@ -2429,7 +2111,6 @@ function updateQrCodeWithValue(value) {
     if (typeof QRious !== 'undefined') {
         try {
           new QRious({ element: qrElement, value: value, size: size, level: 'L' });
-          qrElement.style.display = 'block';
         } catch (e) {
              console.error("QRious error:", e);
              qrElement.innerHTML = DOMPurify.sanitize("QR Code Generation Error");
@@ -3050,15 +2731,12 @@ document.addEventListener('DOMContentLoaded', () => {
     acceptCallButton = document.getElementById('acceptCallButton');
     rejectCallButton = document.getElementById('rejectCallButton');
     friendListElement = document.getElementById('friendList');
-
     messageInputElement = document.getElementById('messageInput');
     sendMessageButton = document.getElementById('sendMessage');
     postInputElement = document.getElementById('postInput');
     sendPostButton = document.getElementById('sendPost');
     directFileInputElement = document.getElementById('directFileInput');
-    if (directFileInputElement) directFileInputElement.style.maxWidth = '100%';
     groupFileInputElement = document.getElementById('groupFileInput');
-    if (groupFileInputElement) groupFileInputElement.style.maxWidth = '100%';
     onlineFriendSelector = document.getElementById('onlineFriendSelector');
     sendDirectFileButton = document.getElementById('sendDirectFile');
     sendGroupFileButton = document.getElementById('sendGroupFile');
