@@ -42,6 +42,7 @@ let wsReconnectAttempts = 0;
 const MAX_WS_RECONNECT_ATTEMPTS = 10;
 const INITIAL_WS_RECONNECT_DELAY_MS = 2000;
 let activeCallFriendId = null; // 現在通話中の友達ID
+let peerCallTypes = {}; // ピアごとの通話タイプ ('private' | 'meeting' | 'data')
 
 // i18n (Internationalization) support
 const i18n = {
@@ -801,7 +802,7 @@ async function connectWebSocket() {
             break;
         case 'offer':
             if (senderUUID) {
-                await handleOfferAndCreateAnswer(senderUUID, payload.sdp);
+                await handleOfferAndCreateAnswer(senderUUID, payload.sdp, payload.call_type);
             }
             break;
         case 'answer':
@@ -1161,9 +1162,15 @@ async function createOfferForPeer(peerUUID, isReconnectAttempt = false) {
     if (!peer) return;
     const offerSdp = await createOfferAndSetLocal(peerUUID);
     if (offerSdp) {
+        let callType = 'data';
+        if (activeCallFriendId === peerUUID) {
+            callType = 'private';
+        } else if (localStream) {
+            callType = 'meeting';
+        }
         sendSignalingMessage({
             type: 'offer',
-            payload: { target: peerUUID, sdp: offerSdp }
+            payload: { target: peerUUID, sdp: offerSdp, call_type: callType }
         });
         setNegotiationTimeout(peerUUID);
     } else {
@@ -1194,7 +1201,10 @@ async function createOfferAndSetLocal(peerUUID) {
     return null;
   }
 }
-async function handleOfferAndCreateAnswer(peerUUID, offerSdp) {
+async function handleOfferAndCreateAnswer(peerUUID, offerSdp, callType) {
+  if (callType) {
+      peerCallTypes[peerUUID] = callType;
+  }
   let peer = peers[peerUUID];
   const isRenegotiation = !!peer;
   if (!isRenegotiation) {
@@ -1358,6 +1368,7 @@ function closePeerConnection(peerUUID, silent = false) {
         }
         delete peers[peerUUID];
         delete iceCandidateQueue[peerUUID];
+        delete peerCallTypes[peerUUID];
     }
     const channel = dataChannels[peerUUID];
     if (channel) {
@@ -2174,9 +2185,15 @@ async function createAndSendOfferForRenegotiation(peerUUID, peer) {
     try {
         const offer = await peer.createOffer();
         await peer.setLocalDescription(offer);
+        let callType = 'data';
+        if (activeCallFriendId === peerUUID) {
+            callType = 'private';
+        } else if (localStream) {
+            callType = 'meeting';
+        }
         sendSignalingMessage({
             type: 'offer',
-            payload: { target: peerUUID, sdp: peer.localDescription }
+            payload: { target: peerUUID, sdp: peer.localDescription, call_type: callType }
         });
         setNegotiationTimeout(peerUUID);
     } catch (error) {
@@ -2284,22 +2301,20 @@ function handleRemoteTrack(peerUUID, track, stream) {
     const friendVideoInterface = document.getElementById(`video-interface-${peerUUID}`);
     const friendVideoContainer = document.getElementById(`remote-video-container-${peerUUID}`);
 
-    // VideoMeetingモード（全体会議）かどうかの判定:
-    // localStreamが存在し、かつ 個別の友達との通話中(activeCallFriendId)でない場合は VideoMeeting中とみなす
-    const isVideoMeetingMode = (localStream && !activeCallFriendId);
+    const callType = peerCallTypes[peerUUID];
 
-    if (!isVideoMeetingMode) {
-        // プライベート通話、または着信（自分がVideoMeeting中でない）の場合 -> 友達リスト内のコンテナを使用
+    if (callType === 'private') {
+        // プライベート通話の場合 -> 友達リスト内のコンテナを使用
         container = friendVideoContainer;
         
         // UIが閉じていたら自動で開く（着信時の自動表示）
         if (friendVideoInterface && friendVideoInterface.style.display === 'none') {
             friendVideoInterface.style.display = 'block';
             activeCallFriendId = peerUUID; // 通話状態にする
-            updateStatus(`Incoming video from ${peerUUID.substring(0, 6)}`, 'blue');
+            updateStatus(`Incoming private video from ${peerUUID.substring(0, 6)}`, 'blue');
         }
     } else {
-        // VideoMeetingモードならメインコンテナ（もともとのVideoMeeting用）を使用
+        // VideoMeetingモード（meeting）またはその他ならメインコンテナを使用
         container = remoteVideosContainer;
     }
     if (!container) {
