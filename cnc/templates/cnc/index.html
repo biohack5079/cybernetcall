@@ -16,7 +16,7 @@
   <script src="{% static 'cnc/app.js' %}" defer></script>
 </head>
 <body>
-  <h1>🔒CyberNetCall</h1>
+  <h1><a id="reloadLink" href="" style="text-decoration: none; color: inherit;">🔒</a>CyberNetCall</h1>
   <div id="connectionStatus"></div>
   <!-- <p>Scan the QR code or let your friend scan yours to connect.</p> -->
 
@@ -97,6 +97,14 @@
     const scrollLeftButton = document.getElementById('scrollLeft');
     const scrollRightButton = document.getElementById('scrollRight');
     const videoScrollContainer = document.querySelector('.video-scroll-container');
+    const reloadLink = document.getElementById('reloadLink');
+
+    if (reloadLink) {
+      reloadLink.href = window.location.href;
+      reloadLink.addEventListener('click', () => {
+        reloadLink.href = window.location.href;
+      });
+    }
 
     if (scrollLeftButton && scrollRightButton && videoScrollContainer) {
       scrollLeftButton.addEventListener('click', () => {
