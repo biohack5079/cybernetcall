@@ -1,6 +1,6 @@
 import json
 from django.http import JsonResponse, HttpResponseBadRequest
-from django.views.generic import View
+from django.views.generic import View, TemplateView
 from django.shortcuts import render
 from django.conf import settings
 from django.views.decorators.csrf import csrf_exempt
@@ -185,6 +185,14 @@ class StripeWebhookView(View):
                 pass
 
         return JsonResponse({'status': 'success'})
+
+
+class LegalDisclosureView(TemplateView):
+    template_name = "cnc/legal_disclosure.html"
+
+
+class LegalDisclosureEnView(TemplateView):
+    template_name = "cnc/legal_disclosure_en.html"
 
 
 @csrf_exempt

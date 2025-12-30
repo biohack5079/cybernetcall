@@ -13,4 +13,6 @@ urlpatterns = [
     path("api/stripe/webhook/", views.StripeWebhookView.as_view(), name="stripe_webhook"),
     path('api/mails/send/', views.send_mail_api, name='send_mail_api'),
     path('api/mails/get/<str:mail_id>/', views.get_mail_api, name='get_mail_api'),
+    path("legal/", views.LegalDisclosureView.as_view(), name="legal_disclosure"),
+    path("legal/en/", views.LegalDisclosureEnView.as_view(), name="legal_disclosure_en"),
 ]

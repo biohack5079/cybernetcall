@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>特定商取引法に基づく表記</title>
+  <meta name="description" content="オンライン販売に関する特定商取引法に基づく表記" />
+  <style>
+    body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans JP", "Hiragino Sans", "Yu Gothic", "Meiryo", sans-serif; line-height: 1.7; color: #222; margin: 0; }
+    main { max-width: 800px; margin: 2rem auto; padding: 0 1rem; }
+    h1, h2 { line-height: 1.3; }
+    dl { margin: 1rem 0; }
+    dt { font-weight: 600; margin-top: 1rem; }
+    dd { margin-left: 0; }
+    small { color: #555; }
+    footer { margin: 3rem 0 2rem; font-size: 0.9rem; color: #555; }
+    .note { background: #f7f7f9; border: 1px solid #e5e5ea; padding: 0.75rem 1rem; border-radius: 8px; }
+    .site-footer nav ul { list-style: none; padding: 0; display: flex; gap: 1.5rem; margin-bottom: 0.5rem; }
+    .site-footer nav ul li { margin: 0; }
+    .site-footer a { color: #007bff; text-decoration: none; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>特定商取引法に基づく表記</h1>
+
+    <p class="note"><small>
+      本ページは、オンライン販売（通信販売）に関する「商取引に関する開示」情報をまとめたものです。
+    </small></p>
+
+    <dl>
+      <dt>販売事業者</dt>
+      <dd>請求があった場合は遅滞なく開示します。</dd>
+
+      <dt>運営責任者</dt>
+      <dd>請求があった場合は遅滞なく開示します。</dd>
+
+      <dt>所在地</dt>
+      <dd>請求があった場合は速やかに開示いたします。</dd>
+
+      <dt>電話番号</dt>
+      <dd>請求があった場合は速やかに開示いたします。</dd>
+
+      <dt>メールアドレス</dt>
+      <dd><a href="mailto:contact@example.jp">contact@example.jp</a></dd>
+
+      <dt>販売価格</dt>
+      <dd>各商品・サービスページに税込価格を表示します。追加の送料・手数料が発生する場合は、購入手続き時に合計金額とともに明示します。</dd>
+
+      <dt>商品代金以外の必要料金</dt>
+      <dd>
+        送料・各種決済手数料等が発生する場合は、購入手続き時に明示します。<br />
+        インターネット接続料金・通信料金はお客様のご負担となります。
+      </dd>
+
+      <dt>支払方法</dt>
+      <dd>クレジットカード、その他当社が指定する方法（例：国内銀行振込 等）。</dd>
+
+      <dt>支払時期</dt>
+      <dd>クレジットカード：即時処理／銀行振込：ご注文から<span aria-label="例">3</span>日以内の送金。</dd>
+
+      <dt>引渡時期・提供時期</dt>
+      <dd>
+        物販：ご注文から<span aria-label="例">3〜5</span>営業日で発送。<br />
+        デジタル商品・サービス：決済完了後、即時または案内メール送信後に利用可能。
+      </dd>
+
+      <dt>返品・交換・キャンセル</dt>
+      <dd>
+        不良品：送料当社負担で交換または返金いたします。<br />
+        お客様都合：未開封品は商品到着後<span aria-label="例">10</span>日以内のご連絡で対応（対象外の商品・サービスあり）。<br />
+        デジタル商品・役務提供：性質上、提供開始後の返品・返金はお受けできない場合があります。各商品ページの条件をご確認ください。
+      </dd>
+
+      <dt>販売数量・申込期限（該当時）</dt>
+      <dd>数量や期限に制限がある場合は、各商品・サービスページで明示します。</dd>
+
+      <dt>動作環境（ソフトウェア販売時）</dt>
+      <dd>対応OS・必要スペック等は各商品ページに明示します。</dd>
+    </dl>
+
+    <footer class="site-footer">
+      <p>
+        ※本表記は、改正特定商取引法・関連ガイドラインに基づき、通信販売の表示義務の考え方に沿って作成しています。詳しくは
+        <a href="https://support.stripe.com/questions/how-to-create-and-display-a-commerce-disclosure-page?locale=ja-JP" target="_blank" rel="noopener">Stripeヘルプ「商取引に関する開示」</a>および
+        <a href="https://support.stripe.com/questions/guidelines-under-the-revised-specified-commercial-transactions-act-to-be-enforced-in-june-2022?locale=ja-JP" target="_blank" rel="noopener">改正特商法ガイドライン概要</a>
+        を参照してください。
+      </p>
+      <nav aria-label="legal links">
+        <ul>
+          <li><a href="{% url 'legal_disclosure' %}">特定商取引法に基づく表記</a></li>
+          <li><a href="{% url 'legal_disclosure_en' %}">Commerce Disclosure</a></li>
+        </ul>
+      </nav>
+      <nav aria-label="language switch">
+        <ul>
+          <li><a href="{% url 'legal_disclosure' %}">日本語</a></li>
+          <li><a href="{% url 'legal_disclosure_en' %}">English</a></li>
+        </ul>
+      </nav>
+    </footer>
+  </main>
+</body>
+</html>
