@@ -26,7 +26,8 @@ let incomingFileInfo = {};
 let lastReceivedFileChunkMeta = {};
 let onlineFriendsCache = new Set();
 let offlineActivityCache = new Set();
-let isSubscribed = false; // ユーザーの課金状態を保持
+// let isSubscribed = false; // ユーザーの課金状態を保持
+let isSubscribed = true; // Stripe機能を停止し、永久無料とするため true に固定
 let autoConnectFriendsTimer = null;
 let currentFacingMode = 'user'; // 現在のカメラ向き(user: 前面, environment: 背面)
 let html5QrCode = null; // QRコードスキャナのインスタンスを保持
@@ -58,7 +59,7 @@ const i18n = {
         call: "",
         missedCallFrom: "Missed call from",
         at: "at",
-        freeTrial: "Free Trial",
+        // freeTrial: "Free Trial",
         mail: "Mail",
         sendMail: "Send Mail",
         cancel: "Cancel",
@@ -81,7 +82,7 @@ const i18n = {
         call: "",
         missedCallFrom: "不在着信 from",
         at: "at", // 必要に応じて変更
-        freeTrial: "無料期間",
+        // freeTrial: "無料期間",
         mail: "メール",
         sendMail: "送信",
         cancel: "キャンセル",
@@ -317,8 +318,9 @@ async function restoreFriendsFromMails() {
 
     mails.forEach(mail => {
         // 課金中、またはメールが30日以内（お試し期間相当）なら復元対象とする
-        const mailDate = mail.timestamp ? new Date(mail.timestamp) : new Date(0);
-        const shouldRestore = isSubscribed || (now - mailDate) < thirtyDaysInMillis;
+        // const mailDate = mail.timestamp ? new Date(mail.timestamp) : new Date(0);
+        // const shouldRestore = isSubscribed || (now - mailDate) < thirtyDaysInMillis;
+        const shouldRestore = true;
 
         if (shouldRestore) {
             if (mail.sender && mail.sender !== myDeviceId && !existingFriendIds.has(mail.sender)) {
@@ -361,11 +363,12 @@ async function displayFriendList() {
         
         // 足跡表示の条件（権限チェック含む）をソートにも適用
         const checkFootprint = (friend) => {
-            const addedDate = friend.added ? new Date(friend.added) : null;
-            const now = new Date();
-            const thirtyDaysInMillis = 30 * 24 * 60 * 60 * 1000;
-            const isInFreeTrial = addedDate && (now - addedDate) < thirtyDaysInMillis;
-            return (isSubscribed || isInFreeTrial) && offlineActivityCache.has(friend.id);
+            // const addedDate = friend.added ? new Date(friend.added) : null;
+            // const now = new Date();
+            // const thirtyDaysInMillis = 30 * 24 * 60 * 60 * 1000;
+            // const isInFreeTrial = addedDate && (now - addedDate) < thirtyDaysInMillis;
+            // return (isSubscribed || isInFreeTrial) && offlineActivityCache.has(friend.id);
+            return offlineActivityCache.has(friend.id);
         };
 
         const aIsPurple = checkFootprint(a) && !aIsOnline;
@@ -384,13 +387,15 @@ async function displayFriendList() {
         const isOnline = (peers[friend.id] && peers[friend.id].connectionState === 'connected') || onlineFriendsCache.has(friend.id);
 
         // 無料期間（追加から30日以内）かどうかを判定
-        const addedDate = friend.added ? new Date(friend.added) : null;
-        const now = new Date();
-        const thirtyDaysInMillis = 30 * 24 * 60 * 60 * 1000;
-        const isInFreeTrial = addedDate && (now - addedDate) < thirtyDaysInMillis;
+        // const addedDate = friend.added ? new Date(friend.added) : null;
+        // const now = new Date();
+        // const thirtyDaysInMillis = 30 * 24 * 60 * 60 * 1000;
+        // const isInFreeTrial = addedDate && (now - addedDate) < thirtyDaysInMillis;
 
         // 課金ユーザー、または無料期間中であれば足跡機能が有効
-        const canShowFootprints = isSubscribed || isInFreeTrial;
+        // const canShowFootprints = isSubscribed || isInFreeTrial;
+        const canShowFootprints = true;
+        const isInFreeTrial = false;
         const hadOfflineActivity = canShowFootprints && offlineActivityCache.has(friend.id) && !isOnline;
         displaySingleFriend(friend, isOnline, hadOfflineActivity, canShowFootprints, isInFreeTrial);
     });
@@ -479,9 +484,9 @@ function displaySingleFriend(friend, isOnline, hadOfflineActivity, canShowFootpr
         nameSpan.style.color = 'purple'; // 不在時にオンラインだった友達
         let statusText = i18n[lang].wasOnline;
         // 課金しておらず、無料期間中の場合に注釈を追加
-        if (!isSubscribed && isInFreeTrial) {
-            statusText += ` (${i18n[lang].freeTrial})`;
-        }
+        // if (!isSubscribed && isInFreeTrial) {
+        //     statusText += ` (${i18n[lang].freeTrial})`;
+        // }
         const lastSeenText = friend.lastSeen ? `${i18n[lang].lastSeen}: ${new Date(friend.lastSeen).toLocaleString()}` : i18n[lang].offline;
         nameSpan.textContent = `ID: ${friend.id.substring(0, 8)}... (${statusText} - ${lastSeenText})`;
     } else if (isOnline) {
@@ -644,7 +649,7 @@ async function connectWebSocket() {
     const friends = await db.getAll('friends');
     const friendIds = friends.map(f => f.id);
 
-    updateStatus(`Connected to signaling server. Registering (Subscribed: ${isSubscribed})...`, 'blue');
+    updateStatus(`Connected to signaling server. Registering...`, 'blue');
     sendSignalingMessage({
       type: 'register',
       payload: { 
@@ -673,27 +678,28 @@ async function connectWebSocket() {
                         displayMissedCallNotification(notification.sender, notification.timestamp);
                     } else if (notification.type === 'friend_online') {
                         // 課金ユーザー、または無料期間中のユーザーのみが不在時アクティビティ通知を処理する
-                        const db = await dbPromise;
-                        const friend = await db.get('friends', notification.sender);
-                        let isInFreeTrial = false;
-                        if (friend && friend.added) {
-                            const addedDate = new Date(friend.added);
-                            const now = new Date();
-                            const thirtyDaysInMillis = 30 * 24 * 60 * 60 * 1000;
-                            isInFreeTrial = (now - addedDate) < thirtyDaysInMillis;
-                        }
+                        // const db = await dbPromise;
+                        // const friend = await db.get('friends', notification.sender);
+                        // let isInFreeTrial = false;
+                        // if (friend && friend.added) {
+                        //     const addedDate = new Date(friend.added);
+                        //     const now = new Date();
+                        //     const thirtyDaysInMillis = 30 * 24 * 60 * 60 * 1000;
+                        //     isInFreeTrial = (now - addedDate) < thirtyDaysInMillis;
+                        // }
 
-                        const canProcessNotification = isSubscribed || isInFreeTrial;
+                        // const canProcessNotification = isSubscribed || isInFreeTrial;
+                        const canProcessNotification = true;
 
                         if (canProcessNotification) {
                             // 友達の最終ログイン日時を更新し、不在時活動キャッシュに追加
                             await updateFriendLastSeen(notification.sender, notification.timestamp);
                             offlineActivityCache.add(notification.sender);
                             let statusMessage = `Friend ${notification.sender.substring(0,6)} was online at ${new Date(notification.timestamp).toLocaleTimeString()}`;
-                            if (!isSubscribed && isInFreeTrial) {
-                                const lang = getLang();
-                                statusMessage += ` (${i18n[lang].freeTrial})`;
-                            }
+                            // if (!isSubscribed && isInFreeTrial) {
+                            //     const lang = getLang();
+                            //     statusMessage += ` (${i18n[lang].freeTrial})`;
+                            // }
                             updateStatus(statusMessage, 'purple');
                         }
                     } else if (notification.type === 'new_mail_notification') { // 変更: 'mail' から 'new_mail_notification' へ
@@ -710,22 +716,23 @@ async function connectWebSocket() {
                             mail.timestamp = notification.timestamp;
                         }
 
-                        let db = null;
-                        if (dbPromise) {
-                            try { db = await dbPromise; } catch (e) {}
-                        }
-                        let isInFreeTrial = true;
-                        if (db) {
-                            const friend = await db.get('friends', mail.sender);
-                            if (friend) {
-                                const addedDate = friend.added ? new Date(friend.added) : new Date();
-                                const now = new Date();
-                                const thirtyDaysInMillis = 30 * 24 * 60 * 60 * 1000;
-                                isInFreeTrial = (now - addedDate) < thirtyDaysInMillis;
-                            }
-                        }
+                        // let db = null;
+                        // if (dbPromise) {
+                        //     try { db = await dbPromise; } catch (e) {}
+                        // }
+                        // let isInFreeTrial = true;
+                        // if (db) {
+                        //     const friend = await db.get('friends', mail.sender);
+                        //     if (friend) {
+                        //         const addedDate = friend.added ? new Date(friend.added) : new Date();
+                        //         const now = new Date();
+                        //         const thirtyDaysInMillis = 30 * 24 * 60 * 60 * 1000;
+                        //         isInFreeTrial = (now - addedDate) < thirtyDaysInMillis;
+                        //     }
+                        // }
 
-                        const canProcessNotification = isSubscribed || isInFreeTrial;
+                        // const canProcessNotification = isSubscribed || isInFreeTrial;
+                        const canProcessNotification = true;
 
                         if (canProcessNotification) {
                             // 通知の段階ではDBに保存しない。
@@ -2656,7 +2663,13 @@ function setupEventListeners() {
     enableNotificationsButton?.addEventListener('click', subscribeToPushNotifications);
 
     const subscribeButton = document.getElementById('subscribeButton');
-    subscribeButton?.addEventListener('click', handleSubscribeClick);
+    if (subscribeButton) {
+        subscribeButton.style.display = 'none'; // ボタンを非表示にする
+        // Subscription (Optional) のセクション全体を非表示にする
+        if (subscribeButton.parentElement) {
+            subscribeButton.parentElement.style.display = 'none';
+        }
+    }
 
     window.addEventListener('resize', () => {
         if (qrElement && qrElement.style.display !== 'none') {
@@ -2701,6 +2714,7 @@ function setupEventListeners() {
       });
     }
 
+/*
 async function fetchSubscriptionStatus() {
     if (!myDeviceId) return; // myDeviceIdがない場合は何もしない
     try {
@@ -2767,6 +2781,7 @@ async function handleSubscribeClick() {
         console.error('Error in handleSubscribeClick:', error);
     }
 }
+*/
 
 let mailModal;
 let currentMailTarget = null;
@@ -2981,7 +2996,7 @@ async function main() {
   setInteractionUiEnabled(false); // まずUIを無効化
 
   // 3. 課金状態の確認
-  await fetchSubscriptionStatus(); // ページ読み込み時に課金状態を取得
+  // await fetchSubscriptionStatus(); // ページ読み込み時に課金状態を取得
 
   // 4. QRコードの表示
   if (myDeviceId && typeof myDeviceId === 'string' && myDeviceId.length > 0) {
