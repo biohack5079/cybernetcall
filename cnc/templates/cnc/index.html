@@ -8,6 +8,7 @@
   <link rel="manifest" href="{% static 'cnc/manifest.json' %}">
   <link rel="icon" href="{% static 'cnc/icons/icon-192x192.png' %}">
   <link rel="apple-touch-icon" href="{% static 'cnc/icons/icon-192x192.png' %}">
+  <link rel="apple-touch-icon-precomposed" href="{% static 'cnc/icons/icon-192x192.png' %}">
   <meta name="theme-color" content="#ffffff">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
@@ -20,14 +21,17 @@
   <script src="{% static 'cnc/app.js' %}" defer></script>
 </head>
 <body>
-  <h1><a id="reloadLink" href="" style="text-decoration: none; color: inherit;">🔒</a>CyberNetCall</h1>
+  <h1>🔒CyberNetCall</h1>
   <div id="connectionStatus"></div>
   <!-- <p>Scan the QR code or let your friend scan yours to connect.</p> -->
 
-  <canvas id="qrcode"></canvas>
+  <canvas id="qrcode" style="width: 100%; max-width: 300px; height: auto; display: block; margin: 0 auto;"></canvas>
 
-  <button id="startScanButton" style="margin-top: 1rem;">Scan QR Code</button>
-  <div id="qr-reader" style="width: 300px; margin: 20px auto; display: none;"></div>
+  <div style="display: flex; justify-content: space-between; margin: 1rem auto 0; max-width: 300px;">
+    <button id="startScanButton">Scan QR Code</button>
+    <button id="reloadButton">Reload</button>
+  </div>
+  <div id="qr-reader" style="width: 100%; max-width: 400px; margin: 20px auto; display: none;"></div>
   <div id="qr-reader-results" style="margin-top: 10px; font-style: italic;"></div>
 
   <section class="section">
@@ -101,12 +105,11 @@
     const scrollLeftButton = document.getElementById('scrollLeft');
     const scrollRightButton = document.getElementById('scrollRight');
     const videoScrollContainer = document.querySelector('.video-scroll-container');
-    const reloadLink = document.getElementById('reloadLink');
+    const reloadButton = document.getElementById('reloadButton');
 
-    if (reloadLink) {
-      reloadLink.href = window.location.href;
-      reloadLink.addEventListener('click', () => {
-        reloadLink.href = window.location.href;
+    if (reloadButton) {
+      reloadButton.addEventListener('click', () => {
+        window.location.reload();
       });
     }
 
