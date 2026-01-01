@@ -69,6 +69,7 @@ const i18n = {
         content: "Content",
         newMailNotification: "New mail from",
         clickToView: "Click to view",
+        deleteMailConfirm: "Delete this mail?",
     },
     ja: {
         friends: "友達",
@@ -92,6 +93,7 @@ const i18n = {
         content: "本文",
         newMailNotification: "新着メール from",
         clickToView: "クリックして表示",
+        deleteMailConfirm: "このメールを削除しますか？",
     }
 };
 
@@ -303,6 +305,33 @@ async function updateFriendLastSeen(friendId, seenTime = null) {
     } catch (error) {
         console.error(`Failed to update lastSeen for friend ${friendId}:`, error);
     }
+}
+async function cleanupOldLocalData() {
+  if (!dbPromise) return;
+  try {
+    const db = await dbPromise;
+    const retentionDays = 30; // 30日保存
+    const retentionLimit = new Date();
+    retentionLimit.setDate(retentionLimit.getDate() - retentionDays);
+
+    const stores = ['mails', 'posts'];
+    for (const storeName of stores) {
+        if (!db.objectStoreNames.contains(storeName)) continue;
+        const tx = db.transaction(storeName, 'readwrite');
+        let cursor = await tx.store.openCursor();
+        while (cursor) {
+            const item = cursor.value;
+            if (item.timestamp && new Date(item.timestamp) < retentionLimit) {
+                await cursor.delete();
+            }
+            cursor = await cursor.continue();
+        }
+        await tx.done;
+    }
+    console.log(`[Cleanup] Local data older than ${retentionDays} days removed.`);
+  } catch (error) {
+    console.error("Error cleaning up local data:", error);
+  }
 }
 async function restoreFriendsFromMails() {
   if (!dbPromise) return;
@@ -1691,6 +1720,59 @@ function displayDirectMessage(message, isOwnMessage = false, senderUUID = null) 
     messageAreaElement.appendChild(div);
     messageAreaElement.scrollTop = messageAreaElement.scrollHeight;
 }
+async function deleteMailFromDb(mailId) {
+  if (!dbPromise) return;
+  try {
+    const db = await dbPromise;
+    const tx = db.transaction('mails', 'readwrite');
+    await tx.store.delete(mailId);
+    await tx.done;
+  } catch (error) {
+    console.error("Error deleting mail from DB:", error);
+  }
+}
+async function deleteMailFromServer(mailId) {
+    if (!mailId) return;
+    try {
+        const csrfToken = getCookie('csrftoken');
+        const headers = {
+            'Content-Type': 'application/json'
+        };
+        if (csrfToken) {
+            headers['X-CSRFToken'] = csrfToken;
+        }
+        
+        // サーバー側の削除APIを呼び出す
+        await fetch(`/api/mails/delete/${mailId}/`, {
+            method: 'DELETE',
+            headers: headers
+        });
+    } catch (error) {
+        console.error("Error deleting mail from server:", error);
+    }
+}
+async function performMailDeletion(mailId) {
+    console.log("[DEBUG] performMailDeletion called for:", mailId);
+    if (!mailId) return;
+
+    const mailElement = document.getElementById(`mail-${mailId}`);
+    if (mailElement) {
+        mailElement.remove();
+    }
+    // 通知が表示されていればそれも削除
+    const notificationElement = document.getElementById(`mail-notification-${mailId}`);
+    if (notificationElement) {
+        notificationElement.remove();
+    }
+    await deleteMailFromDb(mailId);
+    await deleteMailFromServer(mailId);
+}
+async function handleDeleteMail(event) {
+    event.stopPropagation(); // 親要素へのイベント伝播を停止
+    const button = event.currentTarget;
+    const mailId = button.dataset.mailId;
+    await performMailDeletion(mailId);
+}
 function displayMailMessage(mail) {
     if (!messageAreaElement || !mail || !mail.sender) return;
     
@@ -1705,6 +1787,10 @@ function displayMailMessage(mail) {
     div.className = isOwn ? 'message own-message' : 'message peer-message';
     div.style.border = '2px solid purple';
     div.style.backgroundColor = '#f9f0ff';
+    div.style.display = 'flex';
+    div.style.justifyContent = 'space-between';
+    div.style.alignItems = 'flex-start';
+    div.style.position = 'relative'; // ボタンのz-indexを効かせるため
 
     let senderName = `✉ Mail from ${mail.sender.substring(0, 6)}`;
     if (isOwn) {
@@ -1718,31 +1804,88 @@ function displayMailMessage(mail) {
         const dateStr = new Date(mail.nextAccess).toLocaleString();
         html += `<br><small style="color:purple">📅 ${i18n[getLang()].nextAccess}: ${dateStr}</small>`;
     }
-    div.innerHTML = DOMPurify.sanitize(html);
+
+    const contentDiv = document.createElement('div');
+    contentDiv.style.flex = '1';
+    contentDiv.style.wordBreak = 'break-word'; // 長い単語でも折り返す
+    contentDiv.innerHTML = DOMPurify.sanitize(html);
+    div.appendChild(contentDiv);
+
+    const deleteButton = document.createElement('button');
+    deleteButton.textContent = '❌';
+    deleteButton.className = 'delete-mail-button';
+    deleteButton.dataset.mailId = mail.id;
+    deleteButton.style.marginLeft = '10px';
+    deleteButton.style.cursor = 'pointer';
+    deleteButton.style.border = 'none';
+    deleteButton.style.background = 'none';
+    deleteButton.style.flexShrink = '0';
+    deleteButton.style.minWidth = '30px';
+    deleteButton.style.zIndex = '20'; // 他の要素より前面に表示
+    deleteButton.style.color = 'red'; // ボタンの色を赤にして目立たせる
+    deleteButton.style.fontSize = '1.2em';
+    deleteButton.onclick = handleDeleteMail;
+    div.appendChild(deleteButton);
+
     messageAreaElement.appendChild(div);
     messageAreaElement.scrollTop = messageAreaElement.scrollHeight;
 }
 
 function displayNewMailNotification(notification) {
-    if (!messageAreaElement || !notification || !notification.mail_id) return;
+    const mailId = notification.mail_id || notification.id;
+    if (!messageAreaElement || !notification || !mailId) return;
     const lang = getLang();
 
     // 既に同じ通知やメール本体が表示されていないか確認
-    if (document.getElementById(`mail-notification-${notification.mail_id}`) || document.getElementById(`mail-${notification.mail_id}`)) {
+    if (document.getElementById(`mail-notification-${mailId}`) || document.getElementById(`mail-${mailId}`)) {
         return;
     }
 
     const div = document.createElement('div');
-    div.id = `mail-notification-${notification.mail_id}`;
+    div.id = `mail-notification-${mailId}`;
     div.className = 'message peer-message mail-notification';
     div.style.border = '2px solid purple';
     div.style.backgroundColor = '#f9f0ff';
     div.style.cursor = 'pointer';
+    div.style.display = 'flex';
+    div.style.justifyContent = 'space-between';
+    div.style.alignItems = 'center';
+    div.style.position = 'relative'; // ボタンのz-indexを効かせるため
 
     const senderName = notification.sender ? notification.sender.substring(0, 6) : 'Unknown';
-    div.innerHTML = DOMPurify.sanitize(`<strong>✉ ${i18n[lang].newMailNotification} ${senderName}</strong><br><em>${i18n[lang].clickToView}</em>`);
+    
+    const contentSpan = document.createElement('span');
+    contentSpan.style.flex = '1';
+    contentSpan.style.wordBreak = 'break-word'; // 長い単語でも折り返す
+    contentSpan.innerHTML = DOMPurify.sanitize(`<strong>✉ ${i18n[lang].newMailNotification} ${senderName}</strong><br><em>${i18n[lang].clickToView}</em>`);
+    div.appendChild(contentSpan);
 
-    div.onclick = () => fetchAndDisplayMail(notification.mail_id);
+    const deleteButton = document.createElement('button');
+    deleteButton.textContent = '❌';
+    deleteButton.className = 'delete-mail-notification-button';
+    deleteButton.dataset.mailId = mailId;
+    deleteButton.style.marginLeft = '10px';
+    deleteButton.style.cursor = 'pointer';
+    deleteButton.style.border = 'none';
+    deleteButton.style.background = 'none';
+    deleteButton.style.flexShrink = '0';
+    deleteButton.style.minWidth = '30px';
+    deleteButton.style.zIndex = '20'; // 他の要素より前面に表示
+    deleteButton.style.color = 'red'; // ボタンの色を赤にして目立たせる
+    deleteButton.style.fontSize = '1.2em';
+    deleteButton.onclick = async (e) => {
+        e.stopPropagation();
+        try {
+            // 削除前にサーバーから取得（クリックして表示ボタンを押したのと同じ効果を与える）
+            await fetch(`/api/mails/get/${mailId}/`);
+        } catch (error) {
+            console.error("Pre-delete fetch failed:", error);
+        }
+        await performMailDeletion(mailId);
+    };
+    div.appendChild(deleteButton);
+
+    div.onclick = () => fetchAndDisplayMail(mailId);
 
     messageAreaElement.appendChild(div);
     messageAreaElement.scrollTop = messageAreaElement.scrollHeight;
@@ -1765,6 +1908,7 @@ async function fetchAndDisplayMail(mailId) {
             throw new Error('Failed to fetch mail from server.');
         }
         const mail = await response.json();
+        if (!mail.id) mail.id = mailId; // IDがない場合は補完
 
         if (dbPromise) {
             const db = await dbPromise;
@@ -3011,6 +3155,7 @@ async function main() {
   if (typeof idb === 'undefined' || !dbPromise) {
       updateStatus("Database features disabled. Offline functionality will be limited.", "orange");
   } else {
+      await cleanupOldLocalData();
       await restoreFriendsFromMails();
       await displayInitialPosts();
       await displayStoredMails();
