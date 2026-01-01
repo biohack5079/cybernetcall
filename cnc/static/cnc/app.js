@@ -38,7 +38,7 @@ let iceCandidateQueue = {};
 const MAX_PEER_RECONNECT_ATTEMPTS = 3;
 const INITIAL_PEER_RECONNECT_DELAY_MS = 2000;
 let peerNegotiationTimers = {};
-const NEGOTIATION_TIMEOUT_MS = 3000;
+const NEGOTIATION_TIMEOUT_MS = 15000;
 let wsReconnectAttempts = 0;
 const MAX_WS_RECONNECT_ATTEMPTS = 10;
 const INITIAL_WS_RECONNECT_DELAY_MS = 2000;
@@ -107,7 +107,7 @@ let isAttemptingReconnect = false;
 const CHUNK_SIZE = 16384;
 let fileReader;
 const DB_NAME = 'cybernetcall-db';
-const DB_VERSION = 4;
+const DB_VERSION = 5;
 let dbPromise = typeof idb !== 'undefined' ? idb.openDB(DB_NAME, DB_VERSION, {
   upgrade(db, oldVersion) {
     if (!db.objectStoreNames.contains('posts')) {
@@ -123,6 +123,9 @@ let dbPromise = typeof idb !== 'undefined' ? idb.openDB(DB_NAME, DB_VERSION, {
     if (oldVersion < 4 && !db.objectStoreNames.contains('mails')) {
       const store = db.createObjectStore('mails', { keyPath: 'id' });
       store.createIndex('by_sender', 'sender');
+    }
+    if (oldVersion < 5 && !db.objectStoreNames.contains('directMessages')) {
+      db.createObjectStore('directMessages', { keyPath: 'id' });
     }
   }
 }) : null;
@@ -258,6 +261,26 @@ async function deletePostFromDb(postId) {
   } catch (error) {
   }
 }
+async function saveDirectMessage(msg) {
+  if (!dbPromise) return;
+  try {
+    const db = await dbPromise;
+    const tx = db.transaction('directMessages', 'readwrite');
+    await tx.store.put(msg);
+    await tx.done;
+  } catch (error) {
+  }
+}
+async function deleteDirectMessageFromDb(id) {
+  if (!dbPromise) return;
+  try {
+    const db = await dbPromise;
+    const tx = db.transaction('directMessages', 'readwrite');
+    await tx.store.delete(id);
+    await tx.done;
+  } catch (error) {
+  }
+}
 async function addFriend(friendId, friendName = null) {
   if (!dbPromise || !friendId) return;
   if (friendId === myDeviceId) {
@@ -314,7 +337,7 @@ async function cleanupOldLocalData() {
     const retentionLimit = new Date();
     retentionLimit.setDate(retentionLimit.getDate() - retentionDays);
 
-    const stores = ['mails', 'posts'];
+    const stores = ['mails', 'posts', 'directMessages'];
     for (const storeName of stores) {
         if (!db.objectStoreNames.contains(storeName)) continue;
         const tx = db.transaction(storeName, 'readwrite');
@@ -441,6 +464,19 @@ async function displayInitialPosts() {
     postAreaElement.innerHTML = '';
     posts.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
     posts.forEach(post => displayPost(post, false));
+  } catch (error) {
+  }
+}
+async function displayStoredDirectMessages() {
+  if (!dbPromise || !messageAreaElement) return;
+  try {
+    const db = await dbPromise;
+    const msgs = await db.getAll('directMessages');
+    msgs.sort((a, b) => new Date(a.timestamp || 0) - new Date(b.timestamp || 0));
+    msgs.forEach(msg => {
+        const isOwn = msg.sender === myDeviceId;
+        displayDirectMessage(msg, isOwn);
+    });
   } catch (error) {
   }
 }
@@ -778,7 +814,7 @@ async function connectWebSocket() {
             updateStatus('Connected to signaling server. Ready.', 'green');
             currentAppState = AppState.INITIAL;
             setInteractionUiEnabled(false);
-            await Promise.all([displayFriendList(), displayStoredMails()]);
+            await Promise.all([displayFriendList(), displayStoredMails(), displayStoredDirectMessages()]);
             // 友達との自動接続を開始する
             startAutoConnectFriendsTimer();
             if (pendingConnectionFriendId) {
@@ -1066,7 +1102,13 @@ async function createPeerConnection(peerUUID, callType = 'data') {
   iceCandidateQueue[peerUUID] = [];
   try {
     const peer = new RTCPeerConnection({
-      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+      iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'stun:stun1.l.google.com:19302' },
+          { urls: 'stun:stun2.l.google.com:19302' },
+          { urls: 'stun:stun3.l.google.com:19302' },
+          { urls: 'stun:stun4.l.google.com:19302' }
+      ]
     });
     peer.onicecandidate = event => {
       if (event.candidate) {
@@ -1493,6 +1535,8 @@ async function processTextMessage(dataString, senderUUID) {
                 break;
             case 'direct-message':
                 message.sender = message.sender || senderUUID;
+                if (!message.id) message.id = generateUUID();
+                await saveDirectMessage(message);
                 displayDirectMessage(message, false, senderUUID);
                 break;
             case 'delete-post':
@@ -1501,6 +1545,13 @@ async function processTextMessage(dataString, senderUUID) {
                     postElement.remove();
                 }
                 await deletePostFromDb(message.postId);
+                break;
+            case 'delete-direct-message':
+                const dmElement = document.getElementById(`dm-${message.id}`);
+                if (dmElement) {
+                    dmElement.remove();
+                }
+                await deleteDirectMessageFromDb(message.id);
                 break;
             case 'file-metadata':
                 incomingFileInfo[message.fileId] = {
@@ -1683,12 +1734,13 @@ function broadcastBinaryData(dataBuffer) {
         return false;
     }
 }
-function handleSendMessage() {
+async function handleSendMessage() {
     const input = messageInputElement;
     const content = input?.value?.trim();
     if (content) {
         const message = {
             type: 'direct-message',
+            id: generateUUID(),
             content: content,
             sender: myDeviceId,
             timestamp: new Date().toISOString()
@@ -1696,6 +1748,7 @@ function handleSendMessage() {
         const messageString = JSON.stringify(message);
         // 修正：選択された相手にのみ送信
         if (sendPrivateMessage(selectedPeerId, messageString)) {
+            await saveDirectMessage(message);
             displayDirectMessage(message, true);
             if(input) input.value = '';
         } else {
@@ -1705,8 +1758,17 @@ function handleSendMessage() {
 }
 function displayDirectMessage(message, isOwnMessage = false, senderUUID = null) {
     if (!messageAreaElement) return;
+    if (message.id && document.getElementById(`dm-${message.id}`)) return;
+
     const div = document.createElement('div');
     div.classList.add('message', isOwnMessage ? 'own-message' : 'peer-message');
+    if (message.id) div.id = `dm-${message.id}`;
+
+    // Flex layout for alignment
+    div.style.display = 'flex';
+    div.style.justifyContent = 'space-between';
+    div.style.alignItems = 'flex-start';
+
     let senderName = 'Unknown';
     if (isOwnMessage) {
         senderName = 'You';
@@ -1716,9 +1778,46 @@ function displayDirectMessage(message, isOwnMessage = false, senderUUID = null) 
         senderName = `Peer (${message.sender.substring(0, 6)})`;
     }
     const linkedContent = linkify(message.content);
-    div.innerHTML = DOMPurify.sanitize(`<strong>${senderName}:</strong> ${linkedContent}`);
+    
+    const contentSpan = document.createElement('span');
+    contentSpan.style.flex = '1';
+    contentSpan.style.wordBreak = 'break-word';
+    contentSpan.innerHTML = DOMPurify.sanitize(`<strong>${senderName}:</strong> ${linkedContent}`);
+    div.appendChild(contentSpan);
+
+    const deleteButton = document.createElement('button');
+    deleteButton.textContent = '❌';
+    deleteButton.className = 'delete-dm-button';
+    deleteButton.style.marginLeft = '10px';
+    deleteButton.style.cursor = 'pointer';
+    deleteButton.style.border = 'none';
+    deleteButton.style.background = 'none';
+    deleteButton.style.color = 'red';
+    deleteButton.style.fontSize = '1.2em';
+    deleteButton.style.flexShrink = '0';
+    deleteButton.ariaLabel = 'Delete message';
+    if (message.id) {
+        deleteButton.dataset.id = message.id;
+        deleteButton.addEventListener('click', handleDeleteDirectMessage);
+    }
+    div.appendChild(deleteButton);
+
     messageAreaElement.appendChild(div);
     messageAreaElement.scrollTop = messageAreaElement.scrollHeight;
+}
+async function handleDeleteDirectMessage(event) {
+    event.stopPropagation();
+    const button = event.currentTarget;
+    const id = button.dataset.id;
+    if (!id) return;
+    const el = document.getElementById(`dm-${id}`);
+    if (el) el.remove();
+    await deleteDirectMessageFromDb(id);
+    const deleteMessage = JSON.stringify({
+        type: 'delete-direct-message',
+        id: id
+    });
+    broadcastMessage(deleteMessage);
 }
 async function deleteMailFromDb(mailId) {
   if (!dbPromise) return;
@@ -3189,6 +3288,7 @@ async function main() {
       await restoreFriendsFromMails();
       await displayInitialPosts();
       await displayStoredMails();
+      await displayStoredDirectMessages();
       await displayFriendList();
   }
 
