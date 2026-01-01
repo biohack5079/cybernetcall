@@ -2945,6 +2945,17 @@ function createMailModal() {
     modal.style.overflow = 'auto';
     modal.style.backgroundColor = 'rgba(0,0,0,0.4)';
 
+    // 背景や余白クリックでキーボードを閉じる（フォーカスを外す）処理を追加
+    modal.addEventListener('click', (e) => {
+        // クリックされた要素が入力フォームでなければ
+        if (e.target.tagName !== 'TEXTAREA' && e.target.tagName !== 'INPUT') {
+            // 現在フォーカスされている要素が入力フォームならフォーカスを外す
+            if (document.activeElement && (document.activeElement.tagName === 'TEXTAREA' || document.activeElement.tagName === 'INPUT')) {
+                document.activeElement.blur();
+            }
+        }
+    });
+
     const content = document.createElement('div');
     content.style.backgroundColor = '#fefefe';
     content.style.margin = '15% auto';
@@ -2962,6 +2973,8 @@ function createMailModal() {
     textArea.style.width = '100%';
     textArea.style.height = '100px';
     textArea.style.marginBottom = '10px';
+    textArea.style.fontSize = '16px'; // iOSでの自動拡大を防ぐ
+    textArea.style.boxSizing = 'border-box';
 
     const dateLabel = document.createElement('label');
     dateLabel.id = 'mailDateLabel';
@@ -2973,6 +2986,23 @@ function createMailModal() {
     dateInput.id = 'mailNextAccess';
     dateInput.style.width = '100%';
     dateInput.style.marginBottom = '20px';
+    dateInput.style.fontSize = '16px'; // iOSでの自動拡大を防ぐ
+    dateInput.style.boxSizing = 'border-box';
+
+    // 入力完了時（フォーカスが外れた時）にズームをリセットする処理
+    const resetZoom = () => {
+        const viewport = document.querySelector('meta[name="viewport"]');
+        if (viewport) {
+            const originalContent = viewport.getAttribute('content');
+            // 一時的にズームを無効化して倍率を1に戻す
+            viewport.setAttribute('content', 'width=device-width, initial-scale=1, maximum-scale=1, minimum-scale=1, user-scalable=no');
+            setTimeout(() => {
+                if (originalContent) viewport.setAttribute('content', originalContent);
+            }, 300);
+        }
+    };
+    textArea.addEventListener('blur', resetZoom);
+    dateInput.addEventListener('blur', resetZoom);
 
     const btnContainer = document.createElement('div');
     btnContainer.style.textAlign = 'right';
