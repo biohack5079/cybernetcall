@@ -3070,10 +3070,17 @@ function createMailModal() {
     const textArea = document.createElement('textarea');
     textArea.id = 'mailContent';
     textArea.style.width = '100%';
+    textArea.classList.add('common-input');
     textArea.style.height = '100px';
-    textArea.style.marginBottom = '10px';
+    textArea.style.display = 'block';
+    textArea.style.margin = '0 0 10px 0';
     textArea.style.fontSize = '16px'; // iOSでの自動拡大を防ぐ
     textArea.style.boxSizing = 'border-box';
+    textArea.style.padding = '8px';
+    textArea.style.border = '1px solid #ccc';
+    textArea.style.borderRadius = '4px';
+    textArea.style.marginBottom = '10px';
+    textArea.style.resize = 'vertical';
 
     const dateLabel = document.createElement('label');
     dateLabel.id = 'mailDateLabel';
@@ -3084,9 +3091,15 @@ function createMailModal() {
     dateInput.type = 'datetime-local';
     dateInput.id = 'mailNextAccess';
     dateInput.style.width = '100%';
-    dateInput.style.marginBottom = '20px';
+    dateInput.style.display = 'block';
+    dateInput.style.margin = '0 0 20px 0';
     dateInput.style.fontSize = '16px'; // iOSでの自動拡大を防ぐ
     dateInput.style.boxSizing = 'border-box';
+    dateInput.style.padding = '8px';
+    dateInput.style.border = '1px solid #ccc';
+    dateInput.style.borderRadius = '4px';
+    dateInput.classList.add('common-input');
+    dateInput.style.marginBottom = '20px';
 
     // 入力完了時（フォーカスが外れた時）にズームをリセットする処理
     const resetZoom = () => {
