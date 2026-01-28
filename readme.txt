@@ -12,6 +12,7 @@ git config --global credential.helper store
     startCommand: 'daphne -b 0.0.0.0 -p 10000 cybernetcall.asgi:application'
     .env内容を設定
     REDIS_URLを設定
+    DATABASE_URLのポートを6543に変更 (Supabase Transaction Mode)
     render.yamlの編集
 
 ### push
