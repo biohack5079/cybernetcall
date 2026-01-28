@@ -13,6 +13,7 @@ git config --global credential.helper store
     .env内容を設定
     REDIS_URLを設定
     DATABASE_URLのポートを6543に変更 (Supabase Transaction Mode)
+    SupabaseのNetwork Restrictionsで「Allow access from anywhere」を有効化
     render.yamlの編集
 
 ### push
