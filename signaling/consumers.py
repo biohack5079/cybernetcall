@@ -1,4 +1,4 @@
-にimport json
+import json
 import logging
 from channels.generic.websocket import AsyncWebsocketConsumer
 from channels.db import database_sync_to_async
@@ -295,49 +295,36 @@ class SignalingConsumer(AsyncWebsocketConsumer):
         # settings.pyからRedisのURLを直接取得して接続する
         # この方法はchannels_redisの内部実装に依存しないため、より堅牢です。
         redis_url = getattr(settings, 'REDIS_URL', 'redis://localhost:6379/0')
-        # redis.from_url は同期メソッドなので await は不要です
-        return redis.from_url(redis_url)
+        return await redis.from_url(redis_url)
 
     async def add_online_user_to_redis(self, user_uuid):
         """ユーザーをオンラインリストにRedisに追加する"""
-        try:
-            redis_conn = await self._get_redis_connection()
-            async with redis_conn:
-                await redis_conn.sadd(self.ONLINE_USERS_REDIS_KEY, user_uuid)
+        redis_conn = await self._get_redis_connection() # _get_redis_connectionは非同期なのでawaitが必要
+        if redis_conn:
+            await redis_conn.sadd(self.ONLINE_USERS_REDIS_KEY, user_uuid)
             logger.debug(f"Added {user_uuid[:8]} to Redis online users.")
-        except Exception as e:
-            logger.error(f"Failed to add user {user_uuid} to Redis: {e}")
 
     async def remove_online_user_from_redis(self, user_uuid):
         """ユーザーをオンラインリストからRedisで削除する"""
-        try:
-            redis_conn = await self._get_redis_connection()
-            async with redis_conn:
-                await redis_conn.srem(self.ONLINE_USERS_REDIS_KEY, user_uuid)
+        redis_conn = await self._get_redis_connection()
+        if redis_conn:
+            await redis_conn.srem(self.ONLINE_USERS_REDIS_KEY, user_uuid)
             logger.debug(f"Removed {user_uuid[:8]} from Redis online users.")
-        except Exception as e:
-            logger.error(f"Failed to remove user {user_uuid} from Redis: {e}")
 
     async def get_all_online_user_uuids(self):
         """Redisから現在オンラインの全ユーザーのUUIDリストを取得する"""
-        try:
-            redis_conn = await self._get_redis_connection()
-            async with redis_conn:
-                online_users_bytes = await redis_conn.smembers(self.ONLINE_USERS_REDIS_KEY)
+        redis_conn = await self._get_redis_connection()
+        if redis_conn:
+            online_users_bytes = await redis_conn.smembers(self.ONLINE_USERS_REDIS_KEY)
             return {u.decode('utf-8') for u in online_users_bytes}
-        except Exception as e:
-            logger.error(f"Failed to get online users from Redis: {e}")
-            return set()
+        return set()
 
     async def is_user_online(self, user_uuid):
         """Redisを使ってユーザーがオンラインかどうかをチェックする"""
-        try:
-            redis_conn = await self._get_redis_connection()
-            async with redis_conn:
-                return await redis_conn.sismember(self.ONLINE_USERS_REDIS_KEY, user_uuid)
-        except Exception as e:
-            logger.error(f"Failed to check online status for {user_uuid}: {e}")
-            return False
+        redis_conn = await self._get_redis_connection()
+        if redis_conn:
+            return await redis_conn.sismember(self.ONLINE_USERS_REDIS_KEY, user_uuid)
+        return False
 
     async def notify_offline_friends_of_my_online_status(self, my_uuid, friends_list):
         """自分がオンラインになったことをオフラインの友達に通知する"""
