@@ -1,4 +1,3 @@
-# /home/my/d/cybernetcall/signaling/routing.py
 from django.urls import re_path
 from . import consumers
 
