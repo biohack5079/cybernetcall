@@ -124,7 +124,8 @@ if DEBUG:
         }
     }
 else:
-    DATABASES = {'default': env.db('DATABASE_URL')}
+    import dj_database_url
+    DATABASES = {'default': dj_database_url.parse(env('DATABASE_URL'))}
 
 
 # Password validation

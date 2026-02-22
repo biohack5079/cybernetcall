@@ -4,6 +4,9 @@ pip3 install -r requirements.txt
 python3 manage.py runserver
 ngrok http 8000
 
+Environment Variables >> .env
+DJANGO_DEBUG=True
+
 ###  Git Credential Helperでキャッシュ
 git config --global credential.helper store
 
