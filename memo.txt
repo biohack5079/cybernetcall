@@ -53,3 +53,9 @@ DEBUG = env.bool('DJANGO_DEBUG', default=True)
 
 ### Start Command
  python manage.py migrate && daphne -b 0.0.0.0 -p 10000 cybernetcall.asgi:application
+
+
+ chmod +x reset_db.sh
+ ./reset_db.sh
+
+

@@ -38,7 +38,6 @@ ALLOWED_HOSTS = ['cybernetcall.onrender.com', 'localhost', '127.0.0.1']
 # または、デバッグモードの時だけ許可するという方法もあります
 if DEBUG:
     ALLOWED_HOSTS.extend(['.ngrok-free.app', '.onrender.com'])
-    CSRF_TRUSTED_ORIGINS = ['https://*.ngrok-free.app']
 
 # Application definition
 
@@ -125,8 +124,7 @@ if DEBUG:
         }
     }
 else:
-    import dj_database_url
-    DATABASES = {'default': dj_database_url.parse(env('DATABASE_URL'))}
+    DATABASES = {'default': env.db('DATABASE_URL')}
 
 
 # Password validation
