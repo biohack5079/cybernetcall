@@ -702,27 +702,32 @@ async function connectWebSocket() {
   updateStatus('Connecting to signaling server...', 'blue');
   signalingSocket = new WebSocket(wsUrl); // WebSocketインスタンスを再作成
   signalingSocket.onopen = async () => { // asyncキーワードを追加
-    wsReconnectAttempts = 0;
-    isAttemptingReconnect = false;
-    if (wsReconnectTimer) {
-      clearTimeout(wsReconnectTimer);
-      wsReconnectTimer = null;
+    try {
+        wsReconnectAttempts = 0;
+        isAttemptingReconnect = false;
+        if (wsReconnectTimer) {
+            clearTimeout(wsReconnectTimer);
+            wsReconnectTimer = null;
+        }
+        updateStatus(`Connected to signaling server. Registering...`, 'blue');
+
+        // --- 友達リストを取得してregisterメッセージに含める ---
+        const db = await dbPromise;
+        const friends = await db.getAll('friends');
+        const friendIds = friends.map(f => f.id);
+
+        sendSignalingMessage({
+            type: 'register',
+            payload: {
+                uuid: myDeviceId,
+                friends: friendIds, // 友達リスト
+                is_subscribed: isSubscribed // 課金状態を送信
+            }
+        });
+    } catch (error) {
+        console.error("Error during WebSocket onopen:", error);
+        updateStatus(`Initialization error: ${error.message}`, 'red');
     }
-
-    // --- 友達リストを取得してregisterメッセージに含める ---
-    const db = await dbPromise;
-    const friends = await db.getAll('friends');
-    const friendIds = friends.map(f => f.id);
-
-    updateStatus(`Connected to signaling server. Registering...`, 'blue');
-    sendSignalingMessage({
-      type: 'register',
-      payload: { 
-          uuid: myDeviceId,
-          friends: friendIds, // 友達リスト
-          is_subscribed: isSubscribed // 課金状態を送信
-      }
-    });
   };
   signalingSocket.onmessage = async (event) => {
     try {
@@ -920,6 +925,8 @@ async function connectWebSocket() {
             break;
       }
     } catch (error) {
+        console.error("Error processing signaling message:", error);
+        updateStatus(`Error processing message: ${error.message}`, 'red');
     }
   };
   signalingSocket.onclose = async (event) => {
@@ -1842,29 +1849,41 @@ async function deleteMailFromServer(mailId) {
         }
         
         // サーバー側の削除APIを呼び出す
-        await fetch(`/api/mails/delete/${mailId}/`, {
+        const response = await fetch(`/api/mails/delete/${mailId}/`, {
             method: 'DELETE',
             headers: headers
         });
+
+        if (!response.ok) {
+            let errorMsg = `Server error: ${response.status}`;
+            try {
+                const errorData = await response.json();
+                errorMsg = errorData.error || errorMsg;
+            } catch (e) { /* ignore json parsing error */ }
+            throw new Error(errorMsg);
+        }
     } catch (error) {
         console.error("Error deleting mail from server:", error);
+        // エラーを再スローして呼び出し元に伝える
+        throw error;
     }
 }
 async function performMailDeletion(mailId) {
     console.log("[DEBUG] performMailDeletion called for:", mailId);
     if (!mailId) return;
-
-    const mailElement = document.getElementById(`mail-${mailId}`);
-    if (mailElement) {
-        mailElement.remove();
+    try {
+        await deleteMailFromServer(mailId);
+        const mailElement = document.getElementById(`mail-${mailId}`);
+        if (mailElement) mailElement.remove();
+        const notificationElement = document.getElementById(`mail-notification-${mailId}`);
+        if (notificationElement) notificationElement.remove();
+        await deleteMailFromDb(mailId);
+        updateStatus('Mail deleted successfully.', 'green');
+    } catch (error) {
+        console.error("Failed to delete mail:", error);
+        updateStatus(`Failed to delete mail: ${error.message}`, 'red');
+        alert(`Failed to delete mail: ${error.message}`);
     }
-    // 通知が表示されていればそれも削除
-    const notificationElement = document.getElementById(`mail-notification-${mailId}`);
-    if (notificationElement) {
-        notificationElement.remove();
-    }
-    await deleteMailFromDb(mailId);
-    await deleteMailFromServer(mailId);
 }
 async function handleDeleteMail(event) {
     event.stopPropagation(); // 親要素へのイベント伝播を停止
@@ -2659,7 +2678,7 @@ function attachStreamToVideo(videoElement, stream, track) {
     // Androidなどで再生を開始するために明示的にplayを呼ぶ
     videoElement.play().catch(e => console.error("Error playing video:", e));
 }
-function updateQrCodeWithValue(value) {
+function updateQrCodeWithValue(value, retryCount = 0) {
     if (!qrElement) {
         qrElement = document.getElementById('qrcode');
     }
@@ -2670,7 +2689,12 @@ function updateQrCodeWithValue(value) {
     if (!value || typeof value !== 'string' || !value.includes('?id=')) {
         console.warn("Invalid or no value provided to update QR code. Value:", value);
         if (qrElement) {
-            qrElement.innerHTML = DOMPurify.sanitize("Your ID is not ready yet or invalid. Please wait or refresh.");
+            const msg = "Your ID is not ready yet or invalid. Please wait or refresh.";
+            if (typeof DOMPurify !== 'undefined') {
+                qrElement.innerHTML = DOMPurify.sanitize(msg);
+            } else {
+                qrElement.textContent = msg;
+            }
             qrElement.style.display = 'block';
         }
         return;
@@ -2678,15 +2702,30 @@ function updateQrCodeWithValue(value) {
     const size = Math.min(window.innerWidth * 0.7, 250);
     if (typeof QRious !== 'undefined') {
         try {
+          qrElement.innerHTML = ''; // 以前のQRコードをクリア
           new QRious({ element: qrElement, value: value, size: size, level: 'L' });
           qrElement.style.display = 'block';
         } catch (e) {
              console.error("QRious error:", e);
-             qrElement.innerHTML = DOMPurify.sanitize("QR Code Generation Error");
+             const msg = "QR Code Generation Error";
+             if (typeof DOMPurify !== 'undefined') {
+                 qrElement.innerHTML = DOMPurify.sanitize(msg);
+             } else {
+                 qrElement.textContent = msg;
+             }
         }
     } else {
         console.error("QRious not loaded.");
-        setTimeout(() => updateQrCodeWithValue(value), 500);
+        if (retryCount < 20) { // 最大10秒間リトライ
+            setTimeout(() => updateQrCodeWithValue(value, retryCount + 1), 500);
+        } else {
+            console.error("QRious failed to load after multiple retries.");
+            if (qrElement) {
+                const msg = "Error: QR library failed to load. Please refresh.";
+                qrElement.textContent = msg;
+                qrElement.style.display = 'block';
+            }
+        }
     }
 }
 function handleStartScanClick() {
