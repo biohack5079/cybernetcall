@@ -13,7 +13,7 @@ services:
     env: python
     region: singapore
     buildCommand: './build.sh'
-    startCommand: 'python manage.py migrate && daphne -b 0.0.0.0 -p $PORT cybernetcall.asgi:application'
+    startCommand: 'python manage.py migrate && daphne -b 0.0.0.0 -p $PORT --proxy-headers cybernetcall.asgi:application'
 
     plan: free
     branch: main

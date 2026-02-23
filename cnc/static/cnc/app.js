@@ -2920,6 +2920,14 @@ function setupEventListeners() {
             updateQrCodeWithValue(myAppUrl);
         }
     });
+    
+    // ブラウザやタブを閉じる際に、サーバーへ明示的に切断を通知する
+    window.addEventListener('beforeunload', () => {
+        if (signalingSocket && signalingSocket.readyState === WebSocket.OPEN) {
+            signalingSocket.close(1000, 'Window closed');
+        }
+    });
+
     sendMessageButton?.addEventListener('click', handleSendMessage);
     sendPostButton?.addEventListener('click', handleSendPost);
     sendDirectFileButton?.addEventListener('click', handleDirectSendFile);
