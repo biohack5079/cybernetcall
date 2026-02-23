@@ -131,7 +131,18 @@ if DEBUG:
         }
     }
 else:
-    DATABASES = {'default': env.db('DATABASE_URL')}
+    default_db = env.db('DATABASE_URL')
+    # SupabaseのURLに含まれる ?pgbouncer=true オプションはpsycopg2でエラーになるため削除
+    if 'OPTIONS' in default_db and 'pgbouncer' in default_db['OPTIONS']:
+        del default_db['OPTIONS']['pgbouncer']
+
+    DATABASES = {
+        'default': default_db
+    }
+    # Supabase Transaction Mode (port 6543) 対策
+    # URL末尾に ?pgbouncer=true がない場合でも、ここで強制的にPrepared Statementsを無効化する
+    if DATABASES['default']['ENGINE'] == 'django.db.backends.postgresql':
+        DATABASES['default'].setdefault('DISABLE_SERVER_SIDE_CURSORS', True)
 
 
 # Password validation
