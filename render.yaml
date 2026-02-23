@@ -4,6 +4,9 @@ services:
     region: singapore
     plan: free
     maxmemoryPolicy: allkeys-lfu
+    ipAllowList:
+      - source: 0.0.0.0/0
+        description: Allow all
 
   - type: web
     name: cybernetcall
@@ -17,15 +20,16 @@ services:
     healthCheckPath: /
     envVars:
       - key: DJANGO_DEBUG
-        value: false
+        value: "false"
       # DATABASE_URL はRenderのダッシュボードでSecretとして設定してください。
       # Supabaseプロジェクトの接続文字列（postgres://...）を使用します。
       - key: REDIS_URL
         fromService:
           type: redis
           name: cybernetcall-redis
+          property: connectionString
       - key: SECRET_KEY
         generateValue: true
       - key: WEB_CONCURRENCY
-        value: 4
+        value: "4"
     autoDeploy: true
