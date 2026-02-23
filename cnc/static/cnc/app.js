@@ -103,6 +103,7 @@ function getLang() {
 
 const MAX_WS_RECONNECT_DELAY_MS = 5000;
 let wsReconnectTimer = null;
+let isAttemptingReconnect = false;
 const CHUNK_SIZE = 16384;
 let fileReader;
 const DB_NAME = 'cybernetcall-db';
@@ -701,6 +702,8 @@ async function connectWebSocket() {
   updateStatus('Connecting to signaling server...', 'blue');
   signalingSocket = new WebSocket(wsUrl); // WebSocketインスタンスを再作成
   signalingSocket.onopen = async () => { // asyncキーワードを追加
+    wsReconnectAttempts = 0;
+    isAttemptingReconnect = false;
     if (wsReconnectTimer) {
       clearTimeout(wsReconnectTimer);
       wsReconnectTimer = null;
@@ -731,13 +734,6 @@ async function connectWebSocket() {
         case 'registered':
             // isSubscribed はページ読み込み時にAPIから取得するため、ここでは何もしない
             // サーバーからの通知（不在着信や友達のオンライン通知）を処理する
-            // 接続が安定したとみなすまでカウントをリセットしない (5秒待機)
-            // これにより、登録直後に切断された場合でも再接続カウントが進み、バックオフが機能する
-            setTimeout(() => {
-                if (signalingSocket && signalingSocket.readyState === WebSocket.OPEN) {
-                    wsReconnectAttempts = 0;
-                }
-            }, 5000);
             offlineActivityCache.clear(); // 新しい通知を受け取る前にキャッシュをクリア
             console.log("[DEBUG] Registered payload:", payload);
             if (payload.notifications && Array.isArray(payload.notifications)) {
@@ -929,20 +925,15 @@ async function connectWebSocket() {
   signalingSocket.onclose = async (event) => {
     // 接続が意図せず切れた場合のみ再接続を試みる
     // 1000 (Normal Closure) や 1001 (Going Away) はユーザーがページを離れた場合など。
-    const closeReason = `Code: ${event.code}, Reason: ${event.reason || 'No reason given'}, Clean: ${event.wasClean}`;
     if (event.code !== 1000 && event.code !== 1001) {
-        updateStatus(`Signaling connection closed unexpectedly. ${closeReason}. Reconnecting...`, 'orange');
         handleWebSocketReconnect();
     } else {
         updateStatus('Signaling connection closed.', 'orange');
-        updateStatus(`Signaling connection closed. ${closeReason}`, 'orange');
     }
     // 全てのピア接続をリセットする
     Object.keys(peers).forEach(peerUUID => closePeerConnection(peerUUID, true)); // silent close
     peers = {};
-    if (signalingSocket === event.target) {
-        signalingSocket = null;
-    }
+    signalingSocket = null;
     await displayFriendList();
   };
   signalingSocket.onerror = (error) => {
@@ -956,30 +947,33 @@ async function connectWebSocket() {
 }
 
 function handleWebSocketReconnect() {
-    // 既に再接続タイマーが動作中の場合は、重複してスケジュールしない
-    if (wsReconnectTimer) {
-        return;
-    }
+    if (isAttemptingReconnect) return; // 既に再接続処理中なら何もしない
 
-    if (wsReconnectAttempts >= MAX_WS_RECONNECT_ATTEMPTS) {
-        updateStatus('Could not reconnect to signaling server. Please check your connection and refresh.', 'red');
-        return;
-    }
-
-    wsReconnectAttempts++;
-    let delay = INITIAL_WS_RECONNECT_DELAY_MS * Math.pow(1.5, wsReconnectAttempts - 1);
-    delay = Math.min(delay, MAX_WS_RECONNECT_DELAY_MS);
+    isAttemptingReconnect = true;
+    wsReconnectAttempts = 0;
     
-    updateStatus(`Signaling disconnected. Reconnecting in ${Math.round(delay/1000)}s (Attempt ${wsReconnectAttempts}/${MAX_WS_RECONNECT_ATTEMPTS})...`, 'orange');
-    
-    Object.keys(peers).forEach(peerUUID => closePeerConnection(peerUUID));
-    Object.values(dataChannels).forEach(channel => { if (channel && channel.readyState !== 'closed') channel.close(); });
-    dataChannels = {};
+    const attemptReconnect = () => {
+      if (wsReconnectAttempts >= MAX_WS_RECONNECT_ATTEMPTS) {
+          updateStatus('Could not reconnect to signaling server. Please check your connection and refresh.', 'red');
+          isAttemptingReconnect = false;
+          return;
+      }
 
-    wsReconnectTimer = setTimeout(async () => {
-        wsReconnectTimer = null; // タイマー発火時にIDをクリア
-        await connectWebSocket();
-    }, delay);
+      wsReconnectAttempts++;
+      let delay = INITIAL_WS_RECONNECT_DELAY_MS * Math.pow(1.5, wsReconnectAttempts - 1);
+      delay = Math.min(delay, MAX_WS_RECONNECT_DELAY_MS);
+      updateStatus(`Signaling disconnected. Reconnecting in ${Math.round(delay/1000)}s (Attempt ${wsReconnectAttempts}/${MAX_WS_RECONNECT_ATTEMPTS})...`, 'orange');
+      Object.keys(peers).forEach(peerUUID => closePeerConnection(peerUUID));
+      Object.values(dataChannels).forEach(channel => { if (channel && channel.readyState !== 'closed') channel.close(); });
+      dataChannels = {};
+
+      if (wsReconnectTimer) clearTimeout(wsReconnectTimer);
+      wsReconnectTimer = setTimeout(async () => {
+          await connectWebSocket();
+          // connectWebSocketが成功すれば onopen で isAttemptingReconnect は false になる
+      }, delay);
+    };
+    attemptReconnect();
 }
 function sendSignalingMessage(message) {
   if (signalingSocket && signalingSocket.readyState === WebSocket.OPEN) {
@@ -1463,6 +1457,7 @@ function resetConnection() {
     setInteractionUiEnabled(false);
     if (wsReconnectTimer) clearTimeout(wsReconnectTimer);
     wsReconnectTimer = null;
+    isAttemptingReconnect = false;
     if(messageAreaElement) messageAreaElement.innerHTML = '';
     if(postAreaElement) postAreaElement.innerHTML = '';
 }
@@ -3160,11 +3155,6 @@ function openMailModal(friendId) {
     document.getElementById('mailContent').value = '';
     document.getElementById('mailNextAccess').value = '';
 
-    const sendBtn = document.getElementById('mailSendBtn');
-    if (sendBtn) sendBtn.disabled = false;
-    const cancelBtn = document.getElementById('mailCancelBtn');
-    if (cancelBtn) cancelBtn.disabled = false;
-
     mailModal.style.display = 'block';
 }
 
@@ -3175,28 +3165,11 @@ function closeMailModal() {
 
 async function sendMail() {
     if (!currentMailTarget) return;
-
-    const sendBtn = document.getElementById('mailSendBtn');
-    const cancelBtn = document.getElementById('mailCancelBtn');
-    const lang = getLang();
-
-    // Prevent double submission
-    if (sendBtn && sendBtn.disabled) {
-        return;
-    }
-    if (sendBtn) {
-        sendBtn.disabled = true;
-        sendBtn.textContent = 'Sending...';
-    }
-    if (cancelBtn) cancelBtn.disabled = true;
-
     const content = document.getElementById('mailContent').value;
     const nextAccess = document.getElementById('mailNextAccess').value;
 
     if (!content && !nextAccess) {
         alert("Please enter content or select a next access date.");
-        if (sendBtn) { sendBtn.disabled = false; sendBtn.textContent = i18n[lang].sendMail; }
-        if (cancelBtn) cancelBtn.disabled = false;
         return;
     }
 
