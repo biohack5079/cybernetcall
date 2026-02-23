@@ -108,6 +108,10 @@ else:
             "BACKEND": "channels_redis.core.RedisChannelLayer",
             "CONFIG": {
                 "hosts": [REDIS_URL],
+                "channel_capacity": {
+                    "http.request": 200,
+                    "websocket.connect": 50,
+                },
             },
         },
     }
