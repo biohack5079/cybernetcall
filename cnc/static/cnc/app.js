@@ -3160,6 +3160,11 @@ function openMailModal(friendId) {
     document.getElementById('mailContent').value = '';
     document.getElementById('mailNextAccess').value = '';
 
+    const sendBtn = document.getElementById('mailSendBtn');
+    if (sendBtn) sendBtn.disabled = false;
+    const cancelBtn = document.getElementById('mailCancelBtn');
+    if (cancelBtn) cancelBtn.disabled = false;
+
     mailModal.style.display = 'block';
 }
 
@@ -3170,11 +3175,28 @@ function closeMailModal() {
 
 async function sendMail() {
     if (!currentMailTarget) return;
+
+    const sendBtn = document.getElementById('mailSendBtn');
+    const cancelBtn = document.getElementById('mailCancelBtn');
+    const lang = getLang();
+
+    // Prevent double submission
+    if (sendBtn && sendBtn.disabled) {
+        return;
+    }
+    if (sendBtn) {
+        sendBtn.disabled = true;
+        sendBtn.textContent = 'Sending...';
+    }
+    if (cancelBtn) cancelBtn.disabled = true;
+
     const content = document.getElementById('mailContent').value;
     const nextAccess = document.getElementById('mailNextAccess').value;
 
     if (!content && !nextAccess) {
         alert("Please enter content or select a next access date.");
+        if (sendBtn) { sendBtn.disabled = false; sendBtn.textContent = i18n[lang].sendMail; }
+        if (cancelBtn) cancelBtn.disabled = false;
         return;
     }
 
