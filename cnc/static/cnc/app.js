@@ -1109,12 +1109,16 @@ async function createPeerConnection(peerUUID, callType = 'data') {
   iceCandidateQueue[peerUUID] = [];
   try {
     const peer = new RTCPeerConnection({
+      // STUNサーバーに加えて、NAT越えのためのTURNサーバーを追加
       iceServers: [
           { urls: 'stun:stun.l.google.com:19302' },
           { urls: 'stun:stun1.l.google.com:19302' },
-          { urls: 'stun:stun2.l.google.com:19302' },
-          { urls: 'stun:stun3.l.google.com:19302' },
-          { urls: 'stun:stun4.l.google.com:19302' }
+          // 無料のTURNサーバー (テスト用。本番環境では信頼性のあるサービスを推奨)
+          {
+            urls: "turn:openrelay.metered.ca:80",
+            username: "openrelayproject",
+            credential: "openrelayproject",
+          },
       ]
     });
     peer.onicecandidate = event => {
