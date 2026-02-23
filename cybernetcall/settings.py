@@ -34,6 +34,7 @@ SECRET_KEY = env('SECRET_KEY')
 DEBUG = env.bool('DJANGO_DEBUG', default=False)
 
 ALLOWED_HOSTS = ['cybernetcall.onrender.com', 'localhost', '127.0.0.1']
+CSRF_TRUSTED_ORIGINS = ['https://cybernetcall.onrender.com']
 
 # または、デバッグモードの時だけ許可するという方法もあります
 if DEBUG:
@@ -65,6 +66,9 @@ MIDDLEWARE = [
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
+
+# Renderのようなリバースプロキシ環境で、httpsを正しく認識させるための設定
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 
 ROOT_URLCONF = 'cybernetcall.urls'
 
