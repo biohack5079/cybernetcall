@@ -4,8 +4,9 @@ pip3 install -r requirements.txt
 python3 manage.py runserver
 ngrok http 8000
 
-Environment Variables >> .env
 DJANGO_DEBUG=True
+SECRET_KEY=your-local-development-secret-key
+Environment Variables >> .env
 
 ###  Git Credential Helperでキャッシュ
 git config --global credential.helper store
@@ -52,7 +53,7 @@ DEBUG = env.bool('DJANGO_DEBUG', default=False)
 DEBUG = env.bool('DJANGO_DEBUG', default=True)
 
 ### Start Command
- python manage.py migrate && daphne -b 0.0.0.0 -p 10000 cybernetcall.asgi:application
+ python manage.py migrate && aphne -b 0.0.0.0 -p $PORT cybernetcall.asgi:application
 
 
  chmod +x reset_db.sh

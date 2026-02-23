@@ -103,7 +103,6 @@ function getLang() {
 
 const MAX_WS_RECONNECT_DELAY_MS = 5000;
 let wsReconnectTimer = null;
-let isAttemptingReconnect = false;
 const CHUNK_SIZE = 16384;
 let fileReader;
 const DB_NAME = 'cybernetcall-db';
@@ -702,8 +701,6 @@ async function connectWebSocket() {
   updateStatus('Connecting to signaling server...', 'blue');
   signalingSocket = new WebSocket(wsUrl); // WebSocketインスタンスを再作成
   signalingSocket.onopen = async () => { // asyncキーワードを追加
-    wsReconnectAttempts = 0;
-    isAttemptingReconnect = false;
     if (wsReconnectTimer) {
       clearTimeout(wsReconnectTimer);
       wsReconnectTimer = null;
@@ -734,6 +731,13 @@ async function connectWebSocket() {
         case 'registered':
             // isSubscribed はページ読み込み時にAPIから取得するため、ここでは何もしない
             // サーバーからの通知（不在着信や友達のオンライン通知）を処理する
+            // 接続が安定したとみなすまでカウントをリセットしない (5秒待機)
+            // これにより、登録直後に切断された場合でも再接続カウントが進み、バックオフが機能する
+            setTimeout(() => {
+                if (signalingSocket && signalingSocket.readyState === WebSocket.OPEN) {
+                    wsReconnectAttempts = 0;
+                }
+            }, 5000);
             offlineActivityCache.clear(); // 新しい通知を受け取る前にキャッシュをクリア
             console.log("[DEBUG] Registered payload:", payload);
             if (payload.notifications && Array.isArray(payload.notifications)) {
@@ -925,15 +929,20 @@ async function connectWebSocket() {
   signalingSocket.onclose = async (event) => {
     // 接続が意図せず切れた場合のみ再接続を試みる
     // 1000 (Normal Closure) や 1001 (Going Away) はユーザーがページを離れた場合など。
+    const closeReason = `Code: ${event.code}, Reason: ${event.reason || 'No reason given'}, Clean: ${event.wasClean}`;
     if (event.code !== 1000 && event.code !== 1001) {
+        updateStatus(`Signaling connection closed unexpectedly. ${closeReason}. Reconnecting...`, 'orange');
         handleWebSocketReconnect();
     } else {
         updateStatus('Signaling connection closed.', 'orange');
+        updateStatus(`Signaling connection closed. ${closeReason}`, 'orange');
     }
     // 全てのピア接続をリセットする
     Object.keys(peers).forEach(peerUUID => closePeerConnection(peerUUID, true)); // silent close
     peers = {};
-    signalingSocket = null;
+    if (signalingSocket === event.target) {
+        signalingSocket = null;
+    }
     await displayFriendList();
   };
   signalingSocket.onerror = (error) => {
@@ -947,33 +956,30 @@ async function connectWebSocket() {
 }
 
 function handleWebSocketReconnect() {
-    if (isAttemptingReconnect) return; // 既に再接続処理中なら何もしない
+    // 既に再接続タイマーが動作中の場合は、重複してスケジュールしない
+    if (wsReconnectTimer) {
+        return;
+    }
 
-    isAttemptingReconnect = true;
-    wsReconnectAttempts = 0;
+    if (wsReconnectAttempts >= MAX_WS_RECONNECT_ATTEMPTS) {
+        updateStatus('Could not reconnect to signaling server. Please check your connection and refresh.', 'red');
+        return;
+    }
+
+    wsReconnectAttempts++;
+    let delay = INITIAL_WS_RECONNECT_DELAY_MS * Math.pow(1.5, wsReconnectAttempts - 1);
+    delay = Math.min(delay, MAX_WS_RECONNECT_DELAY_MS);
     
-    const attemptReconnect = () => {
-      if (wsReconnectAttempts >= MAX_WS_RECONNECT_ATTEMPTS) {
-          updateStatus('Could not reconnect to signaling server. Please check your connection and refresh.', 'red');
-          isAttemptingReconnect = false;
-          return;
-      }
+    updateStatus(`Signaling disconnected. Reconnecting in ${Math.round(delay/1000)}s (Attempt ${wsReconnectAttempts}/${MAX_WS_RECONNECT_ATTEMPTS})...`, 'orange');
+    
+    Object.keys(peers).forEach(peerUUID => closePeerConnection(peerUUID));
+    Object.values(dataChannels).forEach(channel => { if (channel && channel.readyState !== 'closed') channel.close(); });
+    dataChannels = {};
 
-      wsReconnectAttempts++;
-      let delay = INITIAL_WS_RECONNECT_DELAY_MS * Math.pow(1.5, wsReconnectAttempts - 1);
-      delay = Math.min(delay, MAX_WS_RECONNECT_DELAY_MS);
-      updateStatus(`Signaling disconnected. Reconnecting in ${Math.round(delay/1000)}s (Attempt ${wsReconnectAttempts}/${MAX_WS_RECONNECT_ATTEMPTS})...`, 'orange');
-      Object.keys(peers).forEach(peerUUID => closePeerConnection(peerUUID));
-      Object.values(dataChannels).forEach(channel => { if (channel && channel.readyState !== 'closed') channel.close(); });
-      dataChannels = {};
-
-      if (wsReconnectTimer) clearTimeout(wsReconnectTimer);
-      wsReconnectTimer = setTimeout(async () => {
-          await connectWebSocket();
-          // connectWebSocketが成功すれば onopen で isAttemptingReconnect は false になる
-      }, delay);
-    };
-    attemptReconnect();
+    wsReconnectTimer = setTimeout(async () => {
+        wsReconnectTimer = null; // タイマー発火時にIDをクリア
+        await connectWebSocket();
+    }, delay);
 }
 function sendSignalingMessage(message) {
   if (signalingSocket && signalingSocket.readyState === WebSocket.OPEN) {
@@ -1457,7 +1463,6 @@ function resetConnection() {
     setInteractionUiEnabled(false);
     if (wsReconnectTimer) clearTimeout(wsReconnectTimer);
     wsReconnectTimer = null;
-    isAttemptingReconnect = false;
     if(messageAreaElement) messageAreaElement.innerHTML = '';
     if(postAreaElement) postAreaElement.innerHTML = '';
 }

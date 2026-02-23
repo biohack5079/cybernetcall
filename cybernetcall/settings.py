@@ -88,18 +88,25 @@ ASGI_APPLICATION = "cybernetcall.asgi.application"
 WSGI_APPLICATION = 'cybernetcall.wsgi.application'
 
 # RedisのURLをsettingsで定義
-REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+REDIS_URL = env('REDIS_URL', default='redis://localhost:6379/0')
 
-CHANNEL_LAYERS = {
-    "default": {
-        "BACKEND": "channels_redis.core.RedisChannelLayer",
-        "CONFIG": {
-            "hosts": [REDIS_URL],
+if DEBUG:
+    # 開発環境ではRedis不要のインメモリチャネルレイヤーを使用
+    CHANNEL_LAYERS = {
+        "default": {
+            "BACKEND": "channels.layers.InMemoryChannelLayer",
         },
-        # 開発中はインメモリバックエンドでもOK
-        # "BACKEND": "channels.layers.InMemoryChannelLayer"
-    },
-}
+    }
+else:
+    # 本番環境ではRedisを使用
+    CHANNEL_LAYERS = {
+        "default": {
+            "BACKEND": "channels_redis.core.RedisChannelLayer",
+            "CONFIG": {
+                "hosts": [REDIS_URL],
+            },
+        },
+    }
 
 
 # Database
@@ -174,15 +181,15 @@ STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 
-SUPERUSER_NAME = env("SUPERUSER_NAME")
-SUPERUSER_EMAIL = env("SUPERUSER_EMAIL")
-SUPERUSER_PASSWORD = env("SUPERUSER_PASSWORD")
+SUPERUSER_NAME = env("SUPERUSER_NAME", default=None)
+SUPERUSER_EMAIL = env("SUPERUSER_EMAIL", default=None)
+SUPERUSER_PASSWORD = env("SUPERUSER_PASSWORD", default=None)
 
-VAPID_PUBLIC_KEY = env("VAPID_PUBLIC_KEY")
-VAPID_PRIVATE_KEY = env("VAPID_PRIVATE_KEY")
+VAPID_PUBLIC_KEY = env("VAPID_PUBLIC_KEY", default=None)
+VAPID_PRIVATE_KEY = env("VAPID_PRIVATE_KEY", default=None)
 
-STRIPE_PUBLISHABLE_KEY = env("STRIPE_PUBLISHABLE_KEY")
-STRIPE_SECRET_KEY = env("STRIPE_SECRET_KEY")
-STRIPE_PRICE_ID_USD = env("STRIPE_PRICE_ID_USD")
-STRIPE_PRICE_ID_JPY = env("STRIPE_PRICE_ID_JPY")
-STRIPE_WEBHOOK_SECRET = env("STRIPE_WEBHOOK_SECRET")
+STRIPE_PUBLISHABLE_KEY = env("STRIPE_PUBLISHABLE_KEY", default=None)
+STRIPE_SECRET_KEY = env("STRIPE_SECRET_KEY", default=None)
+STRIPE_PRICE_ID_USD = env("STRIPE_PRICE_ID_USD", default=None)
+STRIPE_PRICE_ID_JPY = env("STRIPE_PRICE_ID_JPY", default=None)
+STRIPE_WEBHOOK_SECRET = env("STRIPE_WEBHOOK_SECRET", default=None)
