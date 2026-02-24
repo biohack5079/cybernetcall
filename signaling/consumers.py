@@ -333,7 +333,7 @@ class SignalingConsumer(AsyncWebsocketConsumer):
                     "endpoint": sub.endpoint,
                     "keys": {"p256dh": sub.p256dh, "auth": sub.auth}
                 }
-                await sync_to_async(webpush)(
+                await sync_to_async(webpush, thread_sensitive=False)(
                     subscription_info,
                     json.dumps(payload),
                     vapid_private_key=settings.VAPID_PRIVATE_KEY,
