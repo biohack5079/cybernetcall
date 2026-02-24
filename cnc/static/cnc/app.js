@@ -103,6 +103,7 @@ function getLang() {
 
 const MAX_WS_RECONNECT_DELAY_MS = 5000;
 let wsReconnectTimer = null;
+let isAttemptingReconnect = false;
 const CHUNK_SIZE = 16384;
 let fileReader;
 const DB_NAME = 'cybernetcall-db';
@@ -701,31 +702,27 @@ async function connectWebSocket() {
   updateStatus('Connecting to signaling server...', 'blue');
   signalingSocket = new WebSocket(wsUrl); // WebSocketインスタンスを再作成
   signalingSocket.onopen = async () => { // asyncキーワードを追加
-    try {
-        wsReconnectAttempts = 0;
-        if (wsReconnectTimer) {
-            clearTimeout(wsReconnectTimer);
-            wsReconnectTimer = null;
-        }
-        updateStatus(`Connected to signaling server. Registering...`, 'blue');
-
-        // --- 友達リストを取得してregisterメッセージに含める ---
-        const db = await dbPromise;
-        const friends = await db.getAll('friends');
-        const friendIds = friends.map(f => f.id);
-
-        sendSignalingMessage({
-            type: 'register',
-            payload: {
-                uuid: myDeviceId,
-                friends: friendIds, // 友達リスト
-                is_subscribed: isSubscribed // 課金状態を送信
-            }
-        });
-    } catch (error) {
-        console.error("Error during WebSocket onopen:", error);
-        updateStatus(`Initialization error: ${error.message}`, 'red');
+    wsReconnectAttempts = 0;
+    isAttemptingReconnect = false;
+    if (wsReconnectTimer) {
+      clearTimeout(wsReconnectTimer);
+      wsReconnectTimer = null;
     }
+
+    // --- 友達リストを取得してregisterメッセージに含める ---
+    const db = await dbPromise;
+    const friends = await db.getAll('friends');
+    const friendIds = friends.map(f => f.id);
+
+    updateStatus(`Connected to signaling server. Registering...`, 'blue');
+    sendSignalingMessage({
+      type: 'register',
+      payload: { 
+          uuid: myDeviceId,
+          friends: friendIds, // 友達リスト
+          is_subscribed: isSubscribed // 課金状態を送信
+      }
+    });
   };
   signalingSocket.onmessage = async (event) => {
     try {
@@ -923,8 +920,6 @@ async function connectWebSocket() {
             break;
       }
     } catch (error) {
-        console.error("Error processing signaling message:", error);
-        updateStatus(`Error processing message: ${error.message}`, 'red');
     }
   };
   signalingSocket.onclose = async (event) => {
@@ -952,28 +947,33 @@ async function connectWebSocket() {
 }
 
 function handleWebSocketReconnect() {
-    if (wsReconnectTimer) return; // 既に再接続タイマーが動いているなら何もしない
-    
-    if (wsReconnectAttempts >= MAX_WS_RECONNECT_ATTEMPTS) {
-        updateStatus('Could not reconnect to signaling server. Please check your connection and refresh.', 'red');
-        return;
-    }
+    if (isAttemptingReconnect) return; // 既に再接続処理中なら何もしない
 
-    wsReconnectAttempts++;
-    let delay = INITIAL_WS_RECONNECT_DELAY_MS * Math.pow(1.5, wsReconnectAttempts - 1);
-    delay = Math.min(delay, MAX_WS_RECONNECT_DELAY_MS);
+    isAttemptingReconnect = true;
+    wsReconnectAttempts = 0;
     
-    updateStatus(`Signaling disconnected. Reconnecting in ${Math.round(delay/1000)}s (Attempt ${wsReconnectAttempts}/${MAX_WS_RECONNECT_ATTEMPTS})...`, 'orange');
-    
-    // 接続情報をクリア
-    Object.keys(peers).forEach(peerUUID => closePeerConnection(peerUUID));
-    Object.values(dataChannels).forEach(channel => { if (channel && channel.readyState !== 'closed') channel.close(); });
-    dataChannels = {};
+    const attemptReconnect = () => {
+      if (wsReconnectAttempts >= MAX_WS_RECONNECT_ATTEMPTS) {
+          updateStatus('Could not reconnect to signaling server. Please check your connection and refresh.', 'red');
+          isAttemptingReconnect = false;
+          return;
+      }
 
-    wsReconnectTimer = setTimeout(() => {
-        wsReconnectTimer = null;
-        connectWebSocket();
-    }, delay);
+      wsReconnectAttempts++;
+      let delay = INITIAL_WS_RECONNECT_DELAY_MS * Math.pow(1.5, wsReconnectAttempts - 1);
+      delay = Math.min(delay, MAX_WS_RECONNECT_DELAY_MS);
+      updateStatus(`Signaling disconnected. Reconnecting in ${Math.round(delay/1000)}s (Attempt ${wsReconnectAttempts}/${MAX_WS_RECONNECT_ATTEMPTS})...`, 'orange');
+      Object.keys(peers).forEach(peerUUID => closePeerConnection(peerUUID));
+      Object.values(dataChannels).forEach(channel => { if (channel && channel.readyState !== 'closed') channel.close(); });
+      dataChannels = {};
+
+      if (wsReconnectTimer) clearTimeout(wsReconnectTimer);
+      wsReconnectTimer = setTimeout(async () => {
+          await connectWebSocket();
+          // connectWebSocketが成功すれば onopen で isAttemptingReconnect は false になる
+      }, delay);
+    };
+    attemptReconnect();
 }
 function sendSignalingMessage(message) {
   if (signalingSocket && signalingSocket.readyState === WebSocket.OPEN) {
@@ -1102,16 +1102,12 @@ async function createPeerConnection(peerUUID, callType = 'data') {
   iceCandidateQueue[peerUUID] = [];
   try {
     const peer = new RTCPeerConnection({
-      // STUNサーバーに加えて、NAT越えのためのTURNサーバーを追加
       iceServers: [
           { urls: 'stun:stun.l.google.com:19302' },
           { urls: 'stun:stun1.l.google.com:19302' },
-          // 無料のTURNサーバー (テスト用。本番環境では信頼性のあるサービスを推奨)
-          {
-            urls: "turn:openrelay.metered.ca:80",
-            username: "openrelayproject",
-            credential: "openrelayproject",
-          },
+          { urls: 'stun:stun2.l.google.com:19302' },
+          { urls: 'stun:stun3.l.google.com:19302' },
+          { urls: 'stun:stun4.l.google.com:19302' }
       ]
     });
     peer.onicecandidate = event => {
@@ -1846,41 +1842,29 @@ async function deleteMailFromServer(mailId) {
         }
         
         // サーバー側の削除APIを呼び出す
-        const response = await fetch(`/api/mails/delete/${mailId}/`, {
+        await fetch(`/api/mails/delete/${mailId}/`, {
             method: 'DELETE',
             headers: headers
         });
-
-        if (!response.ok) {
-            let errorMsg = `Server error: ${response.status}`;
-            try {
-                const errorData = await response.json();
-                errorMsg = errorData.error || errorMsg;
-            } catch (e) { /* ignore json parsing error */ }
-            throw new Error(errorMsg);
-        }
     } catch (error) {
         console.error("Error deleting mail from server:", error);
-        // エラーを再スローして呼び出し元に伝える
-        throw error;
     }
 }
 async function performMailDeletion(mailId) {
     console.log("[DEBUG] performMailDeletion called for:", mailId);
     if (!mailId) return;
-    try {
-        await deleteMailFromServer(mailId);
-        const mailElement = document.getElementById(`mail-${mailId}`);
-        if (mailElement) mailElement.remove();
-        const notificationElement = document.getElementById(`mail-notification-${mailId}`);
-        if (notificationElement) notificationElement.remove();
-        await deleteMailFromDb(mailId);
-        updateStatus('Mail deleted successfully.', 'green');
-    } catch (error) {
-        console.error("Failed to delete mail:", error);
-        updateStatus(`Failed to delete mail: ${error.message}`, 'red');
-        alert(`Failed to delete mail: ${error.message}`);
+
+    const mailElement = document.getElementById(`mail-${mailId}`);
+    if (mailElement) {
+        mailElement.remove();
     }
+    // 通知が表示されていればそれも削除
+    const notificationElement = document.getElementById(`mail-notification-${mailId}`);
+    if (notificationElement) {
+        notificationElement.remove();
+    }
+    await deleteMailFromDb(mailId);
+    await deleteMailFromServer(mailId);
 }
 async function handleDeleteMail(event) {
     event.stopPropagation(); // 親要素へのイベント伝播を停止
@@ -2675,7 +2659,7 @@ function attachStreamToVideo(videoElement, stream, track) {
     // Androidなどで再生を開始するために明示的にplayを呼ぶ
     videoElement.play().catch(e => console.error("Error playing video:", e));
 }
-function updateQrCodeWithValue(value, retryCount = 0) {
+function updateQrCodeWithValue(value) {
     if (!qrElement) {
         qrElement = document.getElementById('qrcode');
     }
@@ -2686,12 +2670,7 @@ function updateQrCodeWithValue(value, retryCount = 0) {
     if (!value || typeof value !== 'string' || !value.includes('?id=')) {
         console.warn("Invalid or no value provided to update QR code. Value:", value);
         if (qrElement) {
-            const msg = "Your ID is not ready yet or invalid. Please wait or refresh.";
-            if (typeof DOMPurify !== 'undefined') {
-                qrElement.innerHTML = DOMPurify.sanitize(msg);
-            } else {
-                qrElement.textContent = msg;
-            }
+            qrElement.innerHTML = DOMPurify.sanitize("Your ID is not ready yet or invalid. Please wait or refresh.");
             qrElement.style.display = 'block';
         }
         return;
@@ -2699,30 +2678,15 @@ function updateQrCodeWithValue(value, retryCount = 0) {
     const size = Math.min(window.innerWidth * 0.7, 250);
     if (typeof QRious !== 'undefined') {
         try {
-          qrElement.innerHTML = ''; // 以前のQRコードをクリア
           new QRious({ element: qrElement, value: value, size: size, level: 'L' });
           qrElement.style.display = 'block';
         } catch (e) {
              console.error("QRious error:", e);
-             const msg = "QR Code Generation Error";
-             if (typeof DOMPurify !== 'undefined') {
-                 qrElement.innerHTML = DOMPurify.sanitize(msg);
-             } else {
-                 qrElement.textContent = msg;
-             }
+             qrElement.innerHTML = DOMPurify.sanitize("QR Code Generation Error");
         }
     } else {
         console.error("QRious not loaded.");
-        if (retryCount < 20) { // 最大10秒間リトライ
-            setTimeout(() => updateQrCodeWithValue(value, retryCount + 1), 500);
-        } else {
-            console.error("QRious failed to load after multiple retries.");
-            if (qrElement) {
-                const msg = "Error: QR library failed to load. Please refresh.";
-                qrElement.textContent = msg;
-                qrElement.style.display = 'block';
-            }
-        }
+        setTimeout(() => updateQrCodeWithValue(value), 500);
     }
 }
 function handleStartScanClick() {

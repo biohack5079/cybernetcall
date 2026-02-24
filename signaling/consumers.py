@@ -1,59 +1,75 @@
 import json
 import logging
-import asyncio
 from channels.generic.websocket import AsyncWebsocketConsumer
 from channels.db import database_sync_to_async
-from asgiref.sync import sync_to_async
 from django.conf import settings
 from pywebpush import webpush, WebPushException
+import redis.asyncio as redis
 from cnc.models import Notification, PushSubscription, Mail
 
 logger = logging.getLogger(__name__)
+
+# --- Global Redis Connection Pool for Production ---
+# This is created once when the Daphne worker process starts.
+redis_pool = None
+if not settings.DEBUG:
+    try:
+        # from_url is a synchronous method that creates a pool.
+        redis_pool = redis.ConnectionPool.from_url(
+            settings.REDIS_URL,
+            max_connections=20,
+            decode_responses=True # This is important for getting strings back
+        )
+        logger.info("Successfully created Redis connection pool.")
+    except Exception as e:
+        # If this fails, the app will still run, but Redis features will be disabled.
+        # The error will be in the logs.
+        logger.exception(f"CRITICAL: Failed to create Redis connection pool: {e}")
+        redis_pool = None
 
 # ローカル開発用（DEBUG=True）のインメモリオンラインユーザー管理
 local_online_users = set()
 
 class SignalingConsumer(AsyncWebsocketConsumer):
     ONLINE_USERS_REDIS_KEY = "online_users_set"
-
     async def connect(self):
         self.user_uuid = None
         self.broadcast_group_name = "signaling_broadcast"
+        self.redis_conn = None
 
+        # In production, get a connection from the pool.
+        if not settings.DEBUG:
+            if redis_pool:
+                # Creating the client from the pool is synchronous.
+                self.redis_conn = redis.Redis(connection_pool=redis_pool)
+                logger.info("Acquired Redis connection from pool.")
+            else:
+                # Log an error if the pool wasn't created.
+                # We don't close the connection, just log that Redis is unavailable.
+                logger.error("Redis connection pool is not available. Online user status will not work.")
+
+        # The original code had a bug here: `await redis.from_url(...)` which raises a TypeError.
+        # By moving connection logic out, we avoid the crash. The original code also closed
+        # the connection if Redis failed. Now, we accept the connection regardless of Redis status.
         await self.accept()
         logger.info(f"WebSocket connection accepted from {self.channel_name}")
 
     async def disconnect(self, close_code):
-        """
-        Handles the WebSocket disconnection.
-        This method must return quickly to avoid blocking the server.
-        """
-        logger.info(f"Disconnect initiated for {self.channel_name} (UUID: {self.user_uuid}), code: {close_code}")
+        logger.info(f"WebSocket connection closed for {self.channel_name} (UUID: {self.user_uuid}), code: {close_code}")
         if self.user_uuid:
-            # Offload the actual cleanup to a background task.
-            asyncio.create_task(self.cleanup_user_session(self.user_uuid, self.channel_name))
+            await self.channel_layer.group_discard(self.broadcast_group_name, self.channel_name)
+            await self.remove_online_user_from_redis(self.user_uuid)
+            await self.channel_layer.group_discard(f"user_{self.user_uuid}", self.channel_name)
+            
+            await self.broadcast({
+                'type': 'user_left',
+                'uuid': self.user_uuid
+            }, exclude_self=True)
 
-    async def cleanup_user_session(self, user_uuid, channel_name):
-        """
-        Performs all cleanup operations in a background task with a timeout.
-        """
-        try:
-            await asyncio.wait_for(self._do_actual_cleanup(user_uuid, channel_name), timeout=15.0)
-        except asyncio.TimeoutError:
-            logger.error(f"Background cleanup for user {user_uuid} timed out after 15 seconds.")
-        except Exception as e:
-            logger.exception(f"An unexpected error occurred during background cleanup for {user_uuid}: {e}")
-
-    async def _do_actual_cleanup(self, user_uuid, channel_name):
-        """The actual cleanup logic that might hang."""
-        await self.channel_layer.group_discard(self.broadcast_group_name, channel_name)
-        await self.channel_layer.group_discard(f"user_{user_uuid}", channel_name)
-        await self.remove_online_user_from_redis(user_uuid)
-        await self.broadcast({
-            'type': 'user_left',
-            'uuid': user_uuid
-        }, exclude_self=True)
-        logger.info(f"Background cleanup for {user_uuid} completed successfully.")
+        # With a connection pool, we don't need to manually close the connection.
+        # The connection is returned to the pool when the client object is garbage collected.
+        self.redis_conn = None
+        logger.debug("Redis connection released to pool (on disconnect).")
 
     async def receive(self, text_data):
         try:
@@ -150,7 +166,7 @@ class SignalingConsumer(AsyncWebsocketConsumer):
         #     今回はクライアント側の改修を最小限にするため、コメントアウトしています。
         #     この機能を有効にするには、app.jsのregisterメッセージに友達リストを含める改修が必要です。
             friends_list = payload.get('friends', [])
-            asyncio.create_task(self.notify_offline_friends_of_my_online_status(self.user_uuid, friends_list))
+            await self.notify_offline_friends_of_my_online_status(self.user_uuid, friends_list)
         except Exception as e:
             logger.exception(f"Error during registration for user {user_uuid}: {e}")
             await self.close(code=4001) # Use a custom error code
@@ -162,23 +178,26 @@ class SignalingConsumer(AsyncWebsocketConsumer):
         sender_uuid = payload.get('uuid')
 
         if not target_uuid or not sender_uuid:
-            logger.warning("Call request received with missing target or sender UUID.")
             return
 
-        is_online = await self.is_user_online(target_uuid)
+        # RedisなどのChannel Layerに問い合わせて、相手のグループが存在するか（オンラインか）を間接的に確認
+        # ここでは簡略化のため、常に転送を試みる。相手がオフラインならメッセージは破棄される。
+        # より確実なオンラインチェックが必要な場合は、別途オンライン状態をRedisに保存するなどの仕組みが必要。
+        # is_onlineがTrueの場合でも、相手がグループにいない（オフライン）可能性がある
+        # group_sendは失敗しないので、まず転送を試みる
+        await self.forward_message_to_target(target_uuid, 'call-request', payload)
 
-        if is_online:
-            # 相手がオンラインなら、WebSocket経由で直接転送
-            await self.forward_message_to_target(target_uuid, 'call-request', payload)
-            logger.info(f"Forwarded call-request from {sender_uuid[:8]} to online user {target_uuid[:8]}.")
-        else:
-            # 相手がオフラインなら、DBに通知を保存し、Push通知を送信
-            logger.info(f"User {target_uuid[:8]} is offline. Storing missed call from {sender_uuid[:8]} and sending push notification.")
+        is_online = await self.is_user_online(target_uuid) # 転送を試みた後でオンライン状態を再チェック
+        if not is_online:
+            # 相手がオンラインなら、そのまま転送
+            # 相手がオフラインなら、DBに通知を保存
             await self.create_missed_call_notification(recipient_uuid=target_uuid, sender_uuid=sender_uuid)
+            # さらに、Push通知を送信
             await self.send_push_notification_to_user(
                 recipient_uuid=target_uuid,
                 payload={"title": "Missed Call", "body": f"You have a missed call from {sender_uuid[:6]}"}
             )
+            logger.info(f"User {target_uuid[:8]} is offline. Saved missed call notification from {sender_uuid[:8]}.")
 
     async def broadcast(self, message, exclude_self=True):
         logger.debug(f"Broadcasting message: {message}")
@@ -296,12 +315,7 @@ class SignalingConsumer(AsyncWebsocketConsumer):
                     "endpoint": sub.endpoint,
                     "keys": {"p256dh": sub.p256dh, "auth": sub.auth}
                 }
-                await sync_to_async(webpush, thread_sensitive=False)(
-                    subscription_info,
-                    json.dumps(payload),
-                    vapid_private_key=settings.VAPID_PRIVATE_KEY,
-                    vapid_claims=vapid_claims
-                )
+                webpush(subscription_info, json.dumps(payload), vapid_private_key=settings.VAPID_PRIVATE_KEY, vapid_claims=vapid_claims)
             
             logger.info(f"Sent push notification to {len(subscriptions)} device(s) for user {recipient_uuid[:8]}.")
 
@@ -318,12 +332,13 @@ class SignalingConsumer(AsyncWebsocketConsumer):
             local_online_users.add(user_uuid)
             logger.debug(f"Added {user_uuid[:8]} to local online users set (InMemory).")
             return
-        try:
-            redis_conn = self.channel_layer.connection(0)
-            await redis_conn.sadd(self.ONLINE_USERS_REDIS_KEY, user_uuid)
+
+        if self.redis_conn:
+            await self.redis_conn.sadd(self.ONLINE_USERS_REDIS_KEY, user_uuid)
             logger.debug(f"Added {user_uuid[:8]} to Redis online users set.")
-        except Exception as e:
-            logger.error(f"Failed to add online user to Redis: {e}")
+        else:
+            if not settings.DEBUG:
+                logger.warning("Cannot add online user to Redis: no connection.")
 
     async def remove_online_user_from_redis(self, user_uuid):
         """ユーザーをオンラインリストからRedisで削除する"""
@@ -331,36 +346,36 @@ class SignalingConsumer(AsyncWebsocketConsumer):
             local_online_users.discard(user_uuid)
             logger.debug(f"Removed {user_uuid[:8]} from local online users set (InMemory).")
             return
-        try:
-            redis_conn = self.channel_layer.connection(0)
-            await redis_conn.srem(self.ONLINE_USERS_REDIS_KEY, user_uuid)
+
+        if self.redis_conn:
+            await self.redis_conn.srem(self.ONLINE_USERS_REDIS_KEY, user_uuid)
             logger.debug(f"Removed {user_uuid[:8]} from Redis online users set.")
-        except Exception as e:
-            logger.error(f"Failed to remove online user from Redis: {e}")
+        else:
+            if not settings.DEBUG:
+                logger.warning("Cannot remove online user from Redis: no connection.")
 
     async def get_all_online_user_uuids(self):
         """Redisから現在オンラインの全ユーザーのUUIDリストを取得する"""
         if settings.DEBUG:
             return local_online_users.copy()
-        try:
-            redis_conn = self.channel_layer.connection(0)
-            # channels_redis returns bytes, so we need to decode them.
-            online_users_bytes = await redis_conn.smembers(self.ONLINE_USERS_REDIS_KEY)
-            return {user.decode('utf-8') for user in online_users_bytes}
-        except Exception as e:
-            logger.error(f"Failed to get online users from Redis: {e}")
-            return set()
+
+        if self.redis_conn:
+            # decode_responses=True in the pool means we get strings directly
+            return await self.redis_conn.smembers(self.ONLINE_USERS_REDIS_KEY)
+
+        logger.warning("Cannot get online users from Redis: no connection.")
+        return set()
 
     async def is_user_online(self, user_uuid):
         """Redisを使ってユーザーがオンラインかどうかをチェックする"""
         if settings.DEBUG:
             return user_uuid in local_online_users
-        try:
-            redis_conn = self.channel_layer.connection(0)
-            return await redis_conn.sismember(self.ONLINE_USERS_REDIS_KEY, user_uuid)
-        except Exception as e:
-            logger.error(f"Failed to check online status for {user_uuid[:8]} from Redis: {e}")
-            return False
+
+        if self.redis_conn:
+            return await self.redis_conn.sismember(self.ONLINE_USERS_REDIS_KEY, user_uuid)
+
+        logger.warning(f"Cannot check online status for {user_uuid[:8]} from Redis: no connection.")
+        return False
 
     async def notify_offline_friends_of_my_online_status(self, my_uuid, friends_list):
         """自分がオンラインになったことをオフラインの友達に通知する"""

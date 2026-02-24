@@ -13,7 +13,7 @@ services:
     env: python
     region: singapore
     buildCommand: './build.sh'
-    startCommand: 'daphne -b 0.0.0.0 -p $PORT --proxy-headers cybernetcall.asgi:application'
+    startCommand: 'python manage.py migrate && daphne -b 0.0.0.0 -p $PORT --proxy-headers cybernetcall.asgi:application'
 
     plan: free
     branch: main
@@ -21,8 +21,6 @@ services:
     envVars:
       - key: DJANGO_DEBUG
         value: "false"
-      - key: PYTHONUNBUFFERED
-        value: "true"
       # DATABASE_URL はRenderのダッシュボードでSecretとして設定してください。
       # Supabaseプロジェクトの接続文字列（postgres://...）を使用します。
       - key: REDIS_URL
@@ -33,5 +31,5 @@ services:
       - key: SECRET_KEY
         generateValue: true
       - key: WEB_CONCURRENCY
-        value: "1"
+        value: "4"
     autoDeploy: true

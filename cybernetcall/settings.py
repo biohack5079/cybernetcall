@@ -34,7 +34,6 @@ SECRET_KEY = env('SECRET_KEY')
 DEBUG = env.bool('DJANGO_DEBUG', default=False)
 
 ALLOWED_HOSTS = ['cybernetcall.onrender.com', 'localhost', '127.0.0.1']
-CSRF_TRUSTED_ORIGINS = ['https://cybernetcall.onrender.com']
 
 # または、デバッグモードの時だけ許可するという方法もあります
 if DEBUG:
@@ -66,9 +65,6 @@ MIDDLEWARE = [
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
-
-# Renderのようなリバースプロキシ環境で、httpsを正しく認識させるための設定
-SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 
 ROOT_URLCONF = 'cybernetcall.urls'
 
@@ -103,24 +99,11 @@ if DEBUG:
     }
 else:
     # 本番環境ではRedisを使用
-    # RenderのRedis接続数制限(50)を考慮し、channels_redisの接続数を制限する
-    redis_url_with_limit = REDIS_URL
-    if '?' in redis_url_with_limit:
-        # 既に他のパラメータがある場合は '&' を使う
-        redis_url_with_limit += '&max_connections=40'
-    else:
-        # パラメータが何もない場合は '?' を使う
-        redis_url_with_limit += '?max_connections=40'
-
     CHANNEL_LAYERS = {
         "default": {
             "BACKEND": "channels_redis.core.RedisChannelLayer",
             "CONFIG": {
-                "hosts": [redis_url_with_limit],
-                "channel_capacity": {
-                    "http.request": 200,
-                    "websocket.connect": 50,
-                },
+                "hosts": [REDIS_URL],
             },
         },
     }
@@ -191,20 +174,6 @@ TIME_ZONE = 'Asia/Tokyo'
 USE_I18N = True
 
 USE_TZ = True
-
-LOGGING = {
-    'version': 1,
-    'disable_existing_loggers': False,
-    'handlers': {
-        'console': {
-            'class': 'logging.StreamHandler',
-        },
-    },
-    'root': {
-        'handlers': ['console'],
-        'level': 'INFO',
-    },
-}
 
 
 # Static files (CSS, JavaScript, Images)

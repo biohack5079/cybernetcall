@@ -5,21 +5,16 @@ python3 manage.py runserver
 ngrok http 8000
 
 DJANGO_DEBUG=True
-SECRET_KEY=your-local-development-secret-key
-Environment Variables >> .env
 
 ###  Git Credential Helperでキャッシュ
 git config --global credential.helper store
 
 ### renderで設定
     buildCommand: './build.sh'
-    startCommand: 'daphne -b 0.0.0.0 -p 10000 cybernetcall.asgi:application'
+    startCommand: 'daphne -b 0.0.0.0 -p 10000 cnc-pwa.asgi:application'
     .env内容を設定
     REDIS_URLを設定
-    DATABASE_URLのポートを6543に変更 (Supabase Transaction Mode)
-    SupabaseのNetwork Restrictionsで「Allow access from anywhere」を有効化
     render.yamlの編集
-    ポート 6543、末尾の ?sslmode=require 
 
 ### push
 git add .
@@ -28,16 +23,12 @@ git push -u origin main
 
 
 ### 再migration
-pip install -r requirements.txt
 # cnc/migrations/ ディレクトリに移動
 cd cnc/migrations/
 # __init__.py 以外のすべてのファイルを削除
 find . -type f -not -name '__init__.py' -delete
 # 元のディレクトリに戻る
 cd ../../
-
-# データベースをリセット（既存のテーブルと競合しないように削除）
-rm db.sqlite3
 
 python3 manage.py makemigrations cnc
 python3 manage.py migrate
@@ -54,8 +45,6 @@ DEBUG = env.bool('DJANGO_DEBUG', default=False)
 DEBUG = env.bool('DJANGO_DEBUG', default=True)
 
 ### Start Command
- python manage.py migrate && daphne -b 0.0.0.0 -p $PORT cybernetcall.asgi:application
+ python manage.py migrate && daphne -b 0.0.0.0 -p 10000 cybernetcall.asgi:application
 
 
- chmod +x reset_db.sh
- ./reset_db.sh
