@@ -67,12 +67,13 @@ class SignalingConsumer(AsyncWebsocketConsumer):
         if self.user_uuid:
             # Offload the actual cleanup to a background task.
             # This allows the disconnect handler to return immediately, preventing a server hang.
-            asyncio.create_task(self.cleanup_user_session(self.user_uuid, self.channel_name))
-        
-        if self.redis_conn:
+            # Redis接続をタスクに渡して、処理完了後に閉じさせる
+            asyncio.create_task(self.cleanup_user_session(self.user_uuid, self.channel_name, self.redis_conn))
+        elif self.redis_conn:
+            # 登録されていないユーザーの場合は即座に閉じる
             await self.redis_conn.close()
 
-    async def cleanup_user_session(self, user_uuid, channel_name):
+    async def cleanup_user_session(self, user_uuid, channel_name, redis_conn):
         """
         Performs all cleanup operations in a background task with a timeout.
         """
@@ -82,6 +83,10 @@ class SignalingConsumer(AsyncWebsocketConsumer):
             logger.error(f"Background cleanup for user {user_uuid} timed out after 15 seconds.")
         except Exception as e:
             logger.exception(f"An unexpected error occurred during background cleanup for {user_uuid}: {e}")
+        finally:
+            if redis_conn:
+                await redis_conn.close()
+                logger.debug(f"Redis connection closed for {user_uuid} (background task).")
 
     async def _do_actual_cleanup(self, user_uuid, channel_name):
         """The actual cleanup logic that might hang."""

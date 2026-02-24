@@ -103,11 +103,18 @@ if DEBUG:
     }
 else:
     # 本番環境ではRedisを使用
+    # RenderのRedis接続数制限(50)を考慮し、channels_redisの接続数を制限する
+    redis_url_with_limit = REDIS_URL
+    if '?' in redis_url_with_limit:
+        redis_url_with_limit += '&max_connections=20'
+    else:
+        redis_url_with_limit += '?max_connections=20'
+
     CHANNEL_LAYERS = {
         "default": {
             "BACKEND": "channels_redis.core.RedisChannelLayer",
             "CONFIG": {
-                "hosts": [REDIS_URL],
+                "hosts": [redis_url_with_limit],
                 "channel_capacity": {
                     "http.request": 200,
                     "websocket.connect": 50,
