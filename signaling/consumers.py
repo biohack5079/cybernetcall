@@ -11,6 +11,8 @@ from cnc.models import Notification, PushSubscription, Mail
 
 logger = logging.getLogger(__name__)
 
+print("Loading signaling/consumers.py...")
+
 # --- Global Redis Connection Pool for Production ---
 # This is created once when the Daphne worker process starts.
 redis_pool = None
