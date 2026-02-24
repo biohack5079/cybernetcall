@@ -21,7 +21,7 @@ if not settings.DEBUG:
         # from_url is a synchronous method that creates a pool.
         redis_pool = redis.ConnectionPool.from_url(
             settings.REDIS_URL,
-            max_connections=20,
+            max_connections=4,
             decode_responses=True # This is important for getting strings back
         )
         logger.info("Successfully created Redis connection pool.")
@@ -68,6 +68,9 @@ class SignalingConsumer(AsyncWebsocketConsumer):
             # Offload the actual cleanup to a background task.
             # This allows the disconnect handler to return immediately, preventing a server hang.
             asyncio.create_task(self.cleanup_user_session(self.user_uuid, self.channel_name))
+        
+        if self.redis_conn:
+            await self.redis_conn.close()
 
     async def cleanup_user_session(self, user_uuid, channel_name):
         """

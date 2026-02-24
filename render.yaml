@@ -32,4 +32,6 @@ services:
           property: connectionString
       - key: SECRET_KEY
         generateValue: true
+      - key: WEB_CONCURRENCY
+        value: "1"
     autoDeploy: true
