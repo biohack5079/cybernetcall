@@ -106,9 +106,11 @@ else:
     # RenderのRedis接続数制限(50)を考慮し、channels_redisの接続数を制限する
     redis_url_with_limit = REDIS_URL
     if '?' in redis_url_with_limit:
-        redis_url_with_limit += '&max_connections=50'
+        # 既に他のパラメータがある場合は '&' を使う
+        redis_url_with_limit += '&max_connections=40'
     else:
-        redis_url_with_limit += '?max_connections=50'
+        # パラメータが何もない場合は '?' を使う
+        redis_url_with_limit += '?max_connections=40'
 
     CHANNEL_LAYERS = {
         "default": {
