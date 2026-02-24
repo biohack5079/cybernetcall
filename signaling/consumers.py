@@ -10,8 +10,6 @@ from cnc.models import Notification, PushSubscription, Mail
 
 logger = logging.getLogger(__name__)
 
-print("Loading signaling/consumers.py...")
-
 # ローカル開発用（DEBUG=True）のインメモリオンラインユーザー管理
 local_online_users = set()
 
@@ -164,26 +162,23 @@ class SignalingConsumer(AsyncWebsocketConsumer):
         sender_uuid = payload.get('uuid')
 
         if not target_uuid or not sender_uuid:
+            logger.warning("Call request received with missing target or sender UUID.")
             return
 
-        # RedisなどのChannel Layerに問い合わせて、相手のグループが存在するか（オンラインか）を間接的に確認
-        # ここでは簡略化のため、常に転送を試みる。相手がオフラインならメッセージは破棄される。
-        # より確実なオンラインチェックが必要な場合は、別途オンライン状態をRedisに保存するなどの仕組みが必要。
-        # is_onlineがTrueの場合でも、相手がグループにいない（オフライン）可能性がある
-        # group_sendは失敗しないので、まず転送を試みる
-        await self.forward_message_to_target(target_uuid, 'call-request', payload)
+        is_online = await self.is_user_online(target_uuid)
 
-        is_online = await self.is_user_online(target_uuid) # 転送を試みた後でオンライン状態を再チェック
-        if not is_online:
-            # 相手がオンラインなら、そのまま転送
-            # 相手がオフラインなら、DBに通知を保存
+        if is_online:
+            # 相手がオンラインなら、WebSocket経由で直接転送
+            await self.forward_message_to_target(target_uuid, 'call-request', payload)
+            logger.info(f"Forwarded call-request from {sender_uuid[:8]} to online user {target_uuid[:8]}.")
+        else:
+            # 相手がオフラインなら、DBに通知を保存し、Push通知を送信
+            logger.info(f"User {target_uuid[:8]} is offline. Storing missed call from {sender_uuid[:8]} and sending push notification.")
             await self.create_missed_call_notification(recipient_uuid=target_uuid, sender_uuid=sender_uuid)
-            # さらに、Push通知を送信
             await self.send_push_notification_to_user(
                 recipient_uuid=target_uuid,
                 payload={"title": "Missed Call", "body": f"You have a missed call from {sender_uuid[:6]}"}
             )
-            logger.info(f"User {target_uuid[:8]} is offline. Saved missed call notification from {sender_uuid[:8]}.")
 
     async def broadcast(self, message, exclude_self=True):
         logger.debug(f"Broadcasting message: {message}")
