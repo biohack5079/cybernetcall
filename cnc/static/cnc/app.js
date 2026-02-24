@@ -101,6 +101,13 @@ function getLang() {
     return navigator.language.startsWith('ja') ? 'ja' : 'en';
 }
 
+function playNotificationSound() {
+    // This is a placeholder to prevent "is not defined" errors.
+    // You can implement actual sound playback here using the Web Audio API
+    // or an <audio> element if you add a sound file to your project.
+    console.log("Notification sound triggered (placeholder).");
+}
+
 const MAX_WS_RECONNECT_DELAY_MS = 5000;
 let wsReconnectTimer = null;
 const CHUNK_SIZE = 16384;
