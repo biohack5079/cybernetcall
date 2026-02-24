@@ -3,6 +3,7 @@ import logging
 import asyncio
 from channels.generic.websocket import AsyncWebsocketConsumer
 from channels.db import database_sync_to_async
+from asgiref.sync import sync_to_async
 from django.conf import settings
 from pywebpush import webpush, WebPushException
 import redis.asyncio as redis
@@ -183,7 +184,7 @@ class SignalingConsumer(AsyncWebsocketConsumer):
         #     今回はクライアント側の改修を最小限にするため、コメントアウトしています。
         #     この機能を有効にするには、app.jsのregisterメッセージに友達リストを含める改修が必要です。
             friends_list = payload.get('friends', [])
-            await self.notify_offline_friends_of_my_online_status(self.user_uuid, friends_list)
+            asyncio.create_task(self.notify_offline_friends_of_my_online_status(self.user_uuid, friends_list))
         except Exception as e:
             logger.exception(f"Error during registration for user {user_uuid}: {e}")
             await self.close(code=4001) # Use a custom error code
@@ -332,7 +333,12 @@ class SignalingConsumer(AsyncWebsocketConsumer):
                     "endpoint": sub.endpoint,
                     "keys": {"p256dh": sub.p256dh, "auth": sub.auth}
                 }
-                webpush(subscription_info, json.dumps(payload), vapid_private_key=settings.VAPID_PRIVATE_KEY, vapid_claims=vapid_claims)
+                await sync_to_async(webpush)(
+                    subscription_info,
+                    json.dumps(payload),
+                    vapid_private_key=settings.VAPID_PRIVATE_KEY,
+                    vapid_claims=vapid_claims
+                )
             
             logger.info(f"Sent push notification to {len(subscriptions)} device(s) for user {recipient_uuid[:8]}.")
 
