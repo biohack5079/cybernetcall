@@ -1,5 +1,6 @@
 import json
 import logging
+import asyncio
 from channels.generic.websocket import AsyncWebsocketConsumer
 from channels.db import database_sync_to_async
 from django.conf import settings
@@ -55,21 +56,37 @@ class SignalingConsumer(AsyncWebsocketConsumer):
         logger.info(f"WebSocket connection accepted from {self.channel_name}")
 
     async def disconnect(self, close_code):
-        logger.info(f"WebSocket connection closed for {self.channel_name} (UUID: {self.user_uuid}), code: {close_code}")
+        """
+        Handles the WebSocket disconnection.
+        This method must return quickly to avoid blocking the server.
+        """
+        logger.info(f"Disconnect initiated for {self.channel_name} (UUID: {self.user_uuid}), code: {close_code}")
         if self.user_uuid:
-            await self.channel_layer.group_discard(self.broadcast_group_name, self.channel_name)
-            await self.remove_online_user_from_redis(self.user_uuid)
-            await self.channel_layer.group_discard(f"user_{self.user_uuid}", self.channel_name)
-            
-            await self.broadcast({
-                'type': 'user_left',
-                'uuid': self.user_uuid
-            }, exclude_self=True)
+            # Offload the actual cleanup to a background task.
+            # This allows the disconnect handler to return immediately, preventing a server hang.
+            asyncio.create_task(self.cleanup_user_session(self.user_uuid, self.channel_name))
 
-        # With a connection pool, we don't need to manually close the connection.
-        # The connection is returned to the pool when the client object is garbage collected.
-        self.redis_conn = None
-        logger.debug("Redis connection released to pool (on disconnect).")
+    async def cleanup_user_session(self, user_uuid, channel_name):
+        """
+        Performs all cleanup operations in a background task with a timeout.
+        """
+        try:
+            await asyncio.wait_for(self._do_actual_cleanup(user_uuid, channel_name), timeout=15.0)
+        except asyncio.TimeoutError:
+            logger.error(f"Background cleanup for user {user_uuid} timed out after 15 seconds.")
+        except Exception as e:
+            logger.exception(f"An unexpected error occurred during background cleanup for {user_uuid}: {e}")
+
+    async def _do_actual_cleanup(self, user_uuid, channel_name):
+        """The actual cleanup logic that might hang."""
+        await self.channel_layer.group_discard(self.broadcast_group_name, channel_name)
+        await self.channel_layer.group_discard(f"user_{user_uuid}", channel_name)
+        await self.remove_online_user_from_redis(user_uuid)
+        await self.broadcast({
+            'type': 'user_left',
+            'uuid': user_uuid
+        }, exclude_self=True)
+        logger.info(f"Background cleanup for {user_uuid} completed successfully.")
 
     async def receive(self, text_data):
         try:
