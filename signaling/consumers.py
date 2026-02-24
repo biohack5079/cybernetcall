@@ -13,23 +13,35 @@ logger = logging.getLogger(__name__)
 
 print("Loading signaling/consumers.py...")
 
-# --- Global Redis Connection Pool for Production ---
-# This is created once when the Daphne worker process starts.
+# --- Lazily-created, async-safe global Redis connection pool ---
 redis_pool = None
-if not settings.DEBUG:
-    try:
-        # from_url is a synchronous method that creates a pool.
-        redis_pool = redis.ConnectionPool.from_url(
-            settings.REDIS_URL,
-            max_connections=4,
-            decode_responses=True # This is important for getting strings back
-        )
-        logger.info("Successfully created Redis connection pool.")
-    except Exception as e:
-        # If this fails, the app will still run, but Redis features will be disabled.
-        # The error will be in the logs.
-        logger.exception(f"CRITICAL: Failed to create Redis connection pool: {e}")
-        redis_pool = None
+redis_pool_lock = asyncio.Lock()
+
+async def get_redis_pool():
+    """
+    Lazily creates and returns a global Redis connection pool in an async-safe way.
+    """
+    global redis_pool
+    if redis_pool is None:
+        async with redis_pool_lock:
+            # Double-check inside the lock to prevent race conditions from multiple concurrent connections.
+            if redis_pool is None and not settings.DEBUG:
+                try:
+                    # ConnectionPool.from_url is synchronous, so run it in an executor
+                    # to avoid blocking the main asyncio event loop on startup.
+                    loop = asyncio.get_running_loop()
+                    redis_pool = await loop.run_in_executor(
+                        None,  # Use the default thread pool executor
+                        lambda: redis.ConnectionPool.from_url(
+                            settings.REDIS_URL,
+                            max_connections=4,
+                            decode_responses=True
+                        )
+                    )
+                    logger.info("Successfully created Redis connection pool (lazily).")
+                except Exception as e:
+                    logger.exception(f"CRITICAL: Failed to create Redis connection pool: {e}")
+    return redis_pool
 
 # ローカル開発用（DEBUG=True）のインメモリオンラインユーザー管理
 local_online_users = set()
@@ -41,20 +53,14 @@ class SignalingConsumer(AsyncWebsocketConsumer):
         self.broadcast_group_name = "signaling_broadcast"
         self.redis_conn = None
 
-        # In production, get a connection from the pool.
         if not settings.DEBUG:
-            if redis_pool:
-                # Creating the client from the pool is synchronous.
-                self.redis_conn = redis.Redis(connection_pool=redis_pool)
+            pool = await get_redis_pool()
+            if pool:
+                self.redis_conn = redis.Redis(connection_pool=pool)
                 logger.info("Acquired Redis connection from pool.")
             else:
-                # Log an error if the pool wasn't created.
-                # We don't close the connection, just log that Redis is unavailable.
                 logger.error("Redis connection pool is not available. Online user status will not work.")
 
-        # The original code had a bug here: `await redis.from_url(...)` which raises a TypeError.
-        # By moving connection logic out, we avoid the crash. The original code also closed
-        # the connection if Redis failed. Now, we accept the connection regardless of Redis status.
         await self.accept()
         logger.info(f"WebSocket connection accepted from {self.channel_name}")
 
