@@ -108,7 +108,7 @@ else:
     if '?' in redis_url_with_limit:
         redis_url_with_limit += '&max_connections=50'
     else:
-        redis_url_with_limit += '&max_connections=50'
+        redis_url_with_limit += '?max_connections=50'
 
     CHANNEL_LAYERS = {
         "default": {
