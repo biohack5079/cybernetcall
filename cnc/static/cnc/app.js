@@ -103,6 +103,7 @@ function getLang() {
 
 const MAX_WS_RECONNECT_DELAY_MS = 5000;
 let wsReconnectTimer = null;
+let isAttemptingReconnect = false;
 const CHUNK_SIZE = 16384;
 let fileReader;
 const DB_NAME = 'cybernetcall-db';
@@ -702,6 +703,7 @@ async function connectWebSocket() {
   signalingSocket = new WebSocket(wsUrl); // WebSocketインスタンスを再作成
   signalingSocket.onopen = async () => { // asyncキーワードを追加
     wsReconnectAttempts = 0;
+    isAttemptingReconnect = false;
     if (wsReconnectTimer) {
       clearTimeout(wsReconnectTimer);
       wsReconnectTimer = null;
@@ -945,23 +947,33 @@ async function connectWebSocket() {
 }
 
 function handleWebSocketReconnect() {
-    if (wsReconnectAttempts >= MAX_WS_RECONNECT_ATTEMPTS) {
-        updateStatus('Could not reconnect to signaling server. Please check your connection and refresh.', 'red');
-        return;
-    }
+    if (isAttemptingReconnect) return; // 既に再接続処理中なら何もしない
 
-    wsReconnectAttempts++;
-    let delay = INITIAL_WS_RECONNECT_DELAY_MS * Math.pow(1.5, wsReconnectAttempts - 1);
-    delay = Math.min(delay, MAX_WS_RECONNECT_DELAY_MS);
-    updateStatus(`Signaling disconnected. Reconnecting in ${Math.round(delay/1000)}s (Attempt ${wsReconnectAttempts}/${MAX_WS_RECONNECT_ATTEMPTS})...`, 'orange');
-    Object.keys(peers).forEach(peerUUID => closePeerConnection(peerUUID));
-    Object.values(dataChannels).forEach(channel => { if (channel && channel.readyState !== 'closed') channel.close(); });
-    dataChannels = {};
+    isAttemptingReconnect = true;
+    wsReconnectAttempts = 0;
+    
+    const attemptReconnect = () => {
+      if (wsReconnectAttempts >= MAX_WS_RECONNECT_ATTEMPTS) {
+          updateStatus('Could not reconnect to signaling server. Please check your connection and refresh.', 'red');
+          isAttemptingReconnect = false;
+          return;
+      }
 
-    if (wsReconnectTimer) clearTimeout(wsReconnectTimer);
-    wsReconnectTimer = setTimeout(async () => {
-        await connectWebSocket();
-    }, delay);
+      wsReconnectAttempts++;
+      let delay = INITIAL_WS_RECONNECT_DELAY_MS * Math.pow(1.5, wsReconnectAttempts - 1);
+      delay = Math.min(delay, MAX_WS_RECONNECT_DELAY_MS);
+      updateStatus(`Signaling disconnected. Reconnecting in ${Math.round(delay/1000)}s (Attempt ${wsReconnectAttempts}/${MAX_WS_RECONNECT_ATTEMPTS})...`, 'orange');
+      Object.keys(peers).forEach(peerUUID => closePeerConnection(peerUUID));
+      Object.values(dataChannels).forEach(channel => { if (channel && channel.readyState !== 'closed') channel.close(); });
+      dataChannels = {};
+
+      if (wsReconnectTimer) clearTimeout(wsReconnectTimer);
+      wsReconnectTimer = setTimeout(async () => {
+          await connectWebSocket();
+          // connectWebSocketが成功すれば onopen で isAttemptingReconnect は false になる
+      }, delay);
+    };
+    attemptReconnect();
 }
 function sendSignalingMessage(message) {
   if (signalingSocket && signalingSocket.readyState === WebSocket.OPEN) {
@@ -1445,6 +1457,7 @@ function resetConnection() {
     setInteractionUiEnabled(false);
     if (wsReconnectTimer) clearTimeout(wsReconnectTimer);
     wsReconnectTimer = null;
+    isAttemptingReconnect = false;
     if(messageAreaElement) messageAreaElement.innerHTML = '';
     if(postAreaElement) postAreaElement.innerHTML = '';
 }
