@@ -736,85 +736,47 @@ async function connectWebSocket() {
             // サーバーからの通知（不在着信や友達のオンライン通知）を処理する
             offlineActivityCache.clear(); // 新しい通知を受け取る前にキャッシュをクリア
             console.log("[DEBUG] Registered payload:", payload);
-            if (payload.notifications && Array.isArray(payload.notifications)) {
-                console.log("[DEBUG] Notifications:", payload.notifications);
-                for (const notification of payload.notifications) {
-                    if (notification.type === 'missed_call') {
-                        displayMissedCallNotification(notification.sender, notification.timestamp);
-                    } else if (notification.type === 'friend_online') {
-                        // 課金ユーザー、または無料期間中のユーザーのみが不在時アクティビティ通知を処理する
-                        // const db = await dbPromise;
-                        // const friend = await db.get('friends', notification.sender);
-                        // let isInFreeTrial = false;
-                        // if (friend && friend.added) {
-                        //     const addedDate = new Date(friend.added);
-                        //     const now = new Date();
-                        //     const thirtyDaysInMillis = 30 * 24 * 60 * 60 * 1000;
-                        //     isInFreeTrial = (now - addedDate) < thirtyDaysInMillis;
-                        // }
 
-                        // const canProcessNotification = isSubscribed || isInFreeTrial;
-                        const canProcessNotification = true;
-
-                        if (canProcessNotification) {
-                            // 友達の最終ログイン日時を更新し、不在時活動キャッシュに追加
-                            await updateFriendLastSeen(notification.sender, notification.timestamp);
-                            offlineActivityCache.add(notification.sender);
-                            let statusMessage = `Friend ${notification.sender.substring(0,6)} was online at ${new Date(notification.timestamp).toLocaleTimeString()}`;
-                            // if (!isSubscribed && isInFreeTrial) {
-                            //     const lang = getLang();
-                            //     statusMessage += ` (${i18n[lang].freeTrial})`;
-                            // }
-                            updateStatus(statusMessage, 'purple');
-                        }
-                    } else if (notification.type === 'new_mail_notification') { // 変更: 'mail' から 'new_mail_notification' へ
-                        const mail = notification.payload || notification;
-                        // サーバーからの通知形式によってsenderやidの場所が異なる場合に対応
-                        if (!mail.sender && notification.sender) {
-                            mail.sender = notification.sender;
-                        }
-                        if (!mail.sender) continue;
-                        if (!mail.id) {
-                            mail.id = notification.id || generateUUID();
-                        }
-                        if (!mail.timestamp && notification.timestamp) {
-                            mail.timestamp = notification.timestamp;
-                        }
-
-                        // let db = null;
-                        // if (dbPromise) {
-                        //     try { db = await dbPromise; } catch (e) {}
-                        // }
-                        // let isInFreeTrial = true;
-                        // if (db) {
-                        //     const friend = await db.get('friends', mail.sender);
-                        //     if (friend) {
-                        //         const addedDate = friend.added ? new Date(friend.added) : new Date();
-                        //         const now = new Date();
-                        //         const thirtyDaysInMillis = 30 * 24 * 60 * 60 * 1000;
-                        //         isInFreeTrial = (now - addedDate) < thirtyDaysInMillis;
-                        //     }
-                        // }
-
-                        // const canProcessNotification = isSubscribed || isInFreeTrial;
-                        const canProcessNotification = true;
-
-                        if (canProcessNotification) {
-                            // 通知の段階ではDBに保存しない。
-                            // ここで保存すると displayStoredMails() で表示されてしまい、通知と重複するため。
-                            displayNewMailNotification(mail); // 変更: 直接表示せず、通知を表示
-                            if (document.visibilityState === 'visible') {
-                                playNotificationSound();
-                            }
-                        }
-                    }
-                }
-            }
-
+            // 先にUIをReady状態にする
             updateStatus('Connected to signaling server. Ready.', 'green');
             currentAppState = AppState.INITIAL;
             setInteractionUiEnabled(false);
-            await Promise.all([displayFriendList(), displayStoredMails(), displayStoredDirectMessages()]);
+
+            if (payload.notifications && Array.isArray(payload.notifications)) {
+                console.log("[DEBUG] Notifications:", payload.notifications);
+                // 通知のDB保存と反映をバックグラウンドで実行
+                (async () => {
+                    for (const notification of payload.notifications) {
+                        if (notification.type === 'missed_call') {
+                            displayMissedCallNotification(notification.sender, notification.timestamp);
+                        } else if (notification.type === 'friend_online') {
+                            const canProcessNotification = true;
+                            if (canProcessNotification) {
+                                await updateFriendLastSeen(notification.sender, notification.timestamp);
+                                offlineActivityCache.add(notification.sender);
+                                let statusMessage = `Friend ${notification.sender.substring(0,6)} was online at ${new Date(notification.timestamp).toLocaleTimeString()}`;
+                                updateStatus(statusMessage, 'purple');
+                            }
+                        } else if (notification.type === 'new_mail_notification') {
+                            const mail = notification.payload || notification;
+                            if (!mail.sender && notification.sender) mail.sender = notification.sender;
+                            if (mail.sender) {
+                                displayNewMailNotification(mail);
+                                if (document.visibilityState === 'visible') playNotificationSound();
+                            }
+                        }
+                    }
+                    // 全ての通知処理が終わったらリストを一度だけ再描画
+                    await displayFriendList();
+                })();
+            }
+            
+            // 履歴の読み込み（通知がない場合はリストも描画）
+            await Promise.all([displayStoredMails(), displayStoredDirectMessages()]);
+            if (!payload.notifications || payload.notifications.length === 0) {
+                await displayFriendList();
+            }
+
             // 友達との自動接続を開始する
             startAutoConnectFriendsTimer();
             if (pendingConnectionFriendId) {
