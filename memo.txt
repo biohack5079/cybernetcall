@@ -1,6 +1,9 @@
 python3 -m venv myvenv
 source myvenv/bin/activate
 pip3 install -r requirements.txt
+python manage.py migrate
+
+###localで確認
 python3 manage.py runserver
 ngrok http 8000
 
