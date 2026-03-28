@@ -127,6 +127,10 @@ let dbPromise = typeof idb !== 'undefined' ? idb.openDB(DB_NAME, DB_VERSION, {
     if (oldVersion < 5 && !db.objectStoreNames.contains('directMessages')) {
       db.createObjectStore('directMessages', { keyPath: 'id' });
     }
+  },
+  blocked() {
+    console.warn('Database upgrade blocked. Please close other tabs of this app.');
+    updateStatus('Database upgrade blocked. Please close other tabs.', 'orange');
   }
 }) : null;
 if (!dbPromise) {
@@ -882,6 +886,7 @@ async function connectWebSocket() {
             break;
       }
     } catch (error) {
+        console.error("Error processing signaling message:", error, event.data);
     }
   };
   signalingSocket.onclose = async (event) => {
@@ -909,33 +914,33 @@ async function connectWebSocket() {
 }
 
 function handleWebSocketReconnect() {
-    if (isAttemptingReconnect) return; // 既に再接続処理中なら何もしない
+    // すでにタイマーがセットされている（再接続待機中）場合は何もしない
+    if (wsReconnectTimer) return;
+
+    if (wsReconnectAttempts >= MAX_WS_RECONNECT_ATTEMPTS) {
+        updateStatus('Could not reconnect to signaling server. Please refresh.', 'red');
+        isAttemptingReconnect = false;
+        return;
+    }
 
     isAttemptingReconnect = true;
-    wsReconnectAttempts = 0;
     
-    const attemptReconnect = () => {
-      if (wsReconnectAttempts >= MAX_WS_RECONNECT_ATTEMPTS) {
-          updateStatus('Could not reconnect to signaling server. Please check your connection and refresh.', 'red');
-          isAttemptingReconnect = false;
-          return;
-      }
+    wsReconnectAttempts++;
+    let delay = INITIAL_WS_RECONNECT_DELAY_MS * Math.pow(1.5, wsReconnectAttempts - 1);
+    delay = Math.min(delay, MAX_WS_RECONNECT_DELAY_MS);
+    updateStatus(`Signaling disconnected. Reconnecting in ${Math.round(delay/1000)}s (Attempt ${wsReconnectAttempts}/${MAX_WS_RECONNECT_ATTEMPTS})...`, 'orange');
+    
+    // ピア接続をクリーンアップ
+    Object.keys(peers).forEach(peerUUID => closePeerConnection(peerUUID, true));
+    Object.values(dataChannels).forEach(channel => { if (channel && channel.readyState !== 'closed') channel.close(); });
+    dataChannels = {};
 
-      wsReconnectAttempts++;
-      let delay = INITIAL_WS_RECONNECT_DELAY_MS * Math.pow(1.5, wsReconnectAttempts - 1);
-      delay = Math.min(delay, MAX_WS_RECONNECT_DELAY_MS);
-      updateStatus(`Signaling disconnected. Reconnecting in ${Math.round(delay/1000)}s (Attempt ${wsReconnectAttempts}/${MAX_WS_RECONNECT_ATTEMPTS})...`, 'orange');
-      Object.keys(peers).forEach(peerUUID => closePeerConnection(peerUUID));
-      Object.values(dataChannels).forEach(channel => { if (channel && channel.readyState !== 'closed') channel.close(); });
-      dataChannels = {};
-
-      if (wsReconnectTimer) clearTimeout(wsReconnectTimer);
-      wsReconnectTimer = setTimeout(async () => {
-          await connectWebSocket();
-          // connectWebSocketが成功すれば onopen で isAttemptingReconnect は false になる
-      }, delay);
-    };
-    attemptReconnect();
+    if (wsReconnectTimer) clearTimeout(wsReconnectTimer);
+    wsReconnectTimer = setTimeout(async () => {
+        wsReconnectTimer = null;
+        await connectWebSocket();
+        // 成功すれば onopen で wsReconnectAttempts と isAttemptingReconnect がリセットされます
+    }, delay);
 }
 function sendSignalingMessage(message) {
   if (signalingSocket && signalingSocket.readyState === WebSocket.OPEN) {
@@ -2609,17 +2614,29 @@ function handleMeetingRemoteTrack(peerUUID, track, stream) {
 
 // 共通のストリーム割り当てヘルパー関数
 function attachStreamToVideo(videoElement, stream, track) {
-    if (!videoElement.srcObject && stream) {
-        videoElement.srcObject = stream;
-    } else if (videoElement.srcObject) {
-        if (!videoElement.srcObject.getTrackById(track.id)) {
+    // モバイルでのインライン再生に必須の設定
+    videoElement.playsInline = true;
+    videoElement.autoplay = true;
+
+    if (stream) {
+        if (!videoElement.srcObject) {
+            videoElement.srcObject = stream;
+        } else if (!videoElement.srcObject.getTrackById(track.id)) {
             videoElement.srcObject.addTrack(track);
         }
-    } else {
-        console.warn("Could not set srcObject - no stream provided?");
     }
-    // Androidなどで再生を開始するために明示的にplayを呼ぶ
-    videoElement.play().catch(e => console.error("Error playing video:", e));
+
+    // 再生を試み、ブロックされたら標準のコントロール（再生ボタン）を表示
+    videoElement.play().then(() => {
+        videoElement.controls = false;
+    }).catch(() => {
+        videoElement.controls = true;
+    });
+
+    // 再生が開始されたら（ボタンが押されたら）コントロールを消す
+    videoElement.addEventListener('playing', () => {
+        videoElement.controls = false;
+    }, { once: true });
 }
 function updateQrCodeWithValue(value) {
     if (!qrElement) {
@@ -3217,35 +3234,6 @@ async function sendMail() {
 
 async function main() {
   updateStatus('Initializing...', 'black');
-
-  // DOM要素の取得をmain関数の最初に移動
-  qrElement = document.getElementById('qrcode');
-  statusElement = document.getElementById('connectionStatus');
-  qrReaderElement = document.getElementById('qr-reader');
-  qrResultsElement = document.getElementById('qr-reader-results');
-  localVideoElement = document.getElementById('localVideo');
-  remoteVideosContainer = document.getElementById('remoteVideosContainer');
-  messageAreaElement = document.getElementById('messageArea');
-  postAreaElement = document.getElementById('postArea');
-  incomingCallModal = document.getElementById('incomingCallModal');
-  callerIdElement = document.getElementById('callerId');
-  acceptCallButton = document.getElementById('acceptCallButton');
-  rejectCallButton = document.getElementById('rejectCallButton');
-  friendListElement = document.getElementById('friendList');
-  messageInputElement = document.getElementById('messageInput');
-  sendMessageButton = document.getElementById('sendMessage');
-  postInputElement = document.getElementById('postInput');
-  sendPostButton = document.getElementById('sendPost');
-  fileInputElement = document.getElementById('fileInput');
-  sendFileButton = document.getElementById('sendFile');
-  fileTransferStatusElement = document.getElementById('file-transfer-status');
-  callButton = document.getElementById('callButton');
-  frontCamButton = document.getElementById('frontCamButton');
-  backCamButton = document.getElementById('backCamButton');
-  startScanButton = document.getElementById('startScanButton');
-  if (!remoteVideosContainer) {
-      remoteVideosContainer = document.querySelector('.video-scroll-container');
-  }
 
   myDeviceId = localStorage.getItem('cybernetcall-deviceId') || generateUUID();
   localStorage.setItem('cybernetcall-deviceId', myDeviceId);
